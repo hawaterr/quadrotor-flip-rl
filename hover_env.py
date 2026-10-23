@@ -30,11 +30,13 @@ class HoverEnv(gym.Env):
         self.observation_space = spaces.Box(-np.inf, np.inf, shape=(22,), dtype=np.float32)
 
     def _scale_action(self, a):
-        # Piecewise linear so a[0] = -1 -> 0, 0 -> g, 1 -> max thrust
+        # a[0] = -1 -> 0 thrust, 0 -> g, 1 -> max thrust
         if a[0] >= 0:
             thrust = G + a[0] * (self.quad.max_thrust_acc - G)
         else:
             thrust = G * (1.0 + a[0])
+
+        
         rates = a[1:] * self.quad.max_rate
         return thrust, rates
 
@@ -68,7 +70,7 @@ class HoverEnv(gym.Env):
         return self._obs(), {}
 
     def step(self, action):
-        action = np.clip(action, -1, 1)
+        action = np.clip(action, -1, 1) 
         thrust, rates = self._scale_action(action)
         for _ in range(self.substeps):
             self.quad.step(thrust, rates)

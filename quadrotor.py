@@ -67,15 +67,20 @@ class Quadrotor:
     def step(self, thrust_acc_cmd, rate_cmd):
         """One physics step. thrust_acc_cmd: collective thrust / mass [m/s^2]. rate_cmd: body rates [rad/s]."""
         dt = self.dt
+
+        # Clip high values
         thrust_acc_cmd = np.clip(thrust_acc_cmd, 0.0, self.max_thrust_acc)
         rate_cmd = np.clip(rate_cmd, -self.max_rate, self.max_rate)
 
-        # Thrust lag (motors can't change instantly)
+        # Thrust lag (motors can't change instantly): first order low pass filter
         self.thrust_acc += (thrust_acc_cmd - self.thrust_acc) * dt / self.thrust_tau
 
         # Rate controller: P on rate error + gyroscopic compensation
         Iw = self.I @ self.w
         torque = self.I @ (self.kp * (rate_cmd - self.w)) + np.cross(self.w, Iw)
+        # beta flight has similar low level controller: apply torque proportional to error in angular velocity
+        # then do compensation for gyroscopic effects
+        # NOTE: rate is using low level controller but thrust low pass filter, a bit odd
 
         # Translational dynamics (world frame)
         acc = self.R @ np.array([0.0, 0.0, self.thrust_acc]) - np.array([0.0, 0.0, G])
