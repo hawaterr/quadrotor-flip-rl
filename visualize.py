@@ -1,11 +1,11 @@
-"""Quick 3D visualisation of FlipEnv.
+"""Quick 3D visualisation of HoverEnv.
 
-    python visualize.py                      # hand-coded flip (tests env + physics, no RL)
-    python visualize.py --policy zero        # no action: should fall
-    python visualize.py --policy hover       # constant hover thrust: should stay put
+    python visualize.py                      # hand-coded PD hover controller (tests env + physics, no RL)
+    python visualize.py --policy zero        # thrust off: should fall
+    python visualize.py --policy hover       # constant hover thrust, no feedback: drifts from the perturbed start
     python visualize.py --policy random
-    python visualize.py --policy ppo         # trained model from train_ppo.py (ppo_flip.zip)
-    python visualize.py --save flip.gif      # also save the animation
+    python visualize.py --policy ppo         # trained model from train_ppo.py (ppo_hover.zip)
+    python visualize.py --save hover.gif     # also save the animation
 """
 import argparse
 
@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.animation import FuncAnimation
 
-from flip_env import FlipEnv
+from hover_env import HoverEnv
 from quadrotor import G
 
 ARM = 0.15  # visual arm length [m]
@@ -23,27 +23,30 @@ def make_policy(name, env):
     if name == "zero":
         return lambda obs, t: np.array([-1.0, 0, 0, 0])          # thrust off
     if name == "hover":
-        return lambda obs, t: np.array([-0.5, 0, 0, 0])          # thrust = g (with max 4g)
+        return lambda obs, t: np.array([0.0, 0, 0, 0])           # thrust = g
     if name == "random":
         return lambda obs, t: env.action_space.sample()
     if name == "ppo":
         from stable_baselines3 import PPO
-        model = PPO.load("ppo_flip")
+        model = PPO.load("ppo_hover")
         return lambda obs, t: model.predict(obs, deterministic=True)[0]
 
-    # "scripted": climb, roll until one revolution, then hover and stop rotating
-    def scripted(obs, t):
-        if t < 25:
-            return np.array([1.0, 0, 0, 0])
-        if not env.flip_done:
-            return np.array([-0.6, 1.0, 0, 0])
-        return np.array([-0.5, 0, 0, 0])
-    return scripted
+    # "pd": cascaded PD controller. Desired acceleration from position/velocity error sets the
+    # desired thrust direction; body rates rotate body z towards it.
+    def pd(obs, t):
+        q = env.quad
+        a_des = -4.0 * (q.p - env.target) - 3.0 * q.v + np.array([0, 0, G])
+        z_des = a_des / np.linalg.norm(a_des)
+        rates = 8.0 * np.cross([0, 0, 1], q.R.T @ z_des)
+        thrust = a_des @ q.R[:, 2]
+        a0 = (thrust - G) / (q.max_thrust_acc - G) if thrust >= G else thrust / G - 1.0
+        return np.clip(np.array([a0, *(rates / q.max_rate)]), -1, 1)
+    return pd
 
 
 def rollout(env, policy, seed):
     obs, _ = env.reset(seed=seed)
-    log = {"p": [], "R": [], "r": [], "revs": [], "done": [], "thrust": [], "mass": env.quad.m}
+    log = {"p": [], "R": [], "r": [], "dist": [], "thrust": [], "mass": env.quad.m}
     total = 0.0
     for t in range(env.max_steps):
         obs, r, term, trunc, info = env.step(policy(obs, t))
@@ -51,12 +54,11 @@ def rollout(env, policy, seed):
         log["p"].append(env.quad.p.copy())
         log["R"].append(env.quad.R.copy())
         log["r"].append(total)
-        log["revs"].append(info["roll_progress"] / (2 * np.pi))
-        log["done"].append(info["flip_done"])
+        log["dist"].append(info["dist"])
         log["thrust"].append(env.quad.m * env.quad.thrust_acc)  # actual thrust force [N] (after motor lag)
         if term or trunc:
             break
-    print(f"steps={t + 1}  total reward={total:.2f}  flip_done={info['flip_done']}  "
+    print(f"steps={t + 1}  total reward={total:.2f}  final dist={info['dist']:.3f}  "
           f"final upright={env.quad.R[2, 2]:.2f}  final z={env.quad.p[2]:.2f}  crashed={term}")
     return log
 
@@ -98,7 +100,7 @@ def animate(log, ctrl_dt, save=None):
         arrow[0] = ax.quiver(*p, *d, color="b", lw=2, arrow_length_ratio=0.25)
 
         trail.set_data_3d(*P[: i + 1].T)
-        text.set_text(f"t={i * ctrl_dt:.2f}s  revs={log['revs'][i]:.2f}  flip_done={log['done'][i]}\n"
+        text.set_text(f"t={i * ctrl_dt:.2f}s  dist to target={log['dist'][i]:.2f} m\n"
                       f"thrust={F:.1f} N ({F / hover_force:.2f}x hover)  reward={log['r'][i]:.1f}")
         return arm1, arm2, front, trail, text
 
@@ -112,11 +114,11 @@ def animate(log, ctrl_dt, save=None):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--policy", default="scripted", choices=["scripted", "zero", "hover", "random", "ppo"])
+    ap.add_argument("--policy", default="pd", choices=["pd", "zero", "hover", "random", "ppo"])
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--save", default=None, help="e.g. flip.gif")
+    ap.add_argument("--save", default=None, help="e.g. hover.gif")
     args = ap.parse_args()
 
-    env = FlipEnv()
+    env = HoverEnv()
     log = rollout(env, make_policy(args.policy, env), args.seed)
     animate(log, env.ctrl_dt, args.save)
