@@ -73,10 +73,12 @@ def make_policy(name, env):
 def rollout(env, policy, seed):
     obs, _ = env.reset(seed=seed)
     log = {"p": [], "R": [], "r": [], "dist": [], "revs": [], "done": [], "thrust": [],
-           "mass": env.quad.m, "task": env.task}
+           "thrust_cmd": [], "rate_cmd": [], "w": [], "mass": env.quad.m, "task": env.task}
     total = 0.0
     for t in range(env.max_steps):
-        obs, r, term, trunc, info = env.step(policy(obs, t))
+        action = np.clip(policy(obs, t), -1, 1)
+        obs, r, term, trunc, info = env.step(action)
+        thrust_cmd, rate_cmd = env._scale_action(action)
         total += r
         log["p"].append(env.quad.p.copy())
         log["R"].append(env.quad.R.copy())
@@ -85,6 +87,9 @@ def rollout(env, policy, seed):
         log["revs"].append(info["roll_progress"] / (2 * np.pi))
         log["done"].append(info["flip_done"])
         log["thrust"].append(env.quad.m * env.quad.thrust_acc)  # actual thrust force [N] (after motor lag)
+        log["thrust_cmd"].append(env.quad.m * thrust_cmd)
+        log["rate_cmd"].append(rate_cmd)
+        log["w"].append(env.quad.w.copy())
         if term or trunc:
             break
     flip = f"  flip_done={info['flip_done']}" if env.task == "flip" else ""
@@ -98,8 +103,9 @@ def animate(log, ctrl_dt, save=None):
     # Arm tips in body frame (X configuration) and the body "up" axis
     arms = ARM * np.array([[1, 1, 0], [-1, -1, 0], [1, -1, 0], [-1, 1, 0]]) / np.sqrt(2)
 
-    fig = plt.figure(figsize=(7, 7))
-    ax = fig.add_subplot(projection="3d")
+    fig = plt.figure(figsize=(9, 11))
+    gs = fig.add_gridspec(5, 2, height_ratios=[4, 1, 1, 1, 1], hspace=0.25, wspace=0.3)
+    ax = fig.add_subplot(gs[0, :], projection="3d")
     c, half = P.mean(0), max(np.ptp(P, 0).max() / 2 + 0.5, 1.0)
     ax.set_xlim(c[0] - half, c[0] + half); ax.set_ylim(c[1] - half, c[1] + half)
     ax.set_zlim(max(0, c[2] - half), c[2] + half)
@@ -114,6 +120,41 @@ def animate(log, ctrl_dt, save=None):
 
     hover_force = log["mass"] * G
     ARROW_PER_HOVER = 0.3                             # arrow length [m] at hover thrust (m*g)
+
+    # Under the 3D view, drawn up to the current time: thrust across the top, then one row per axis
+    # with the body rate (dashed = commanded, solid = actual) on the left and the attitude angle on the right
+    T = np.arange(1, len(P) + 1) * ctrl_dt
+    series = {"thrust_cmd": np.array(log["thrust_cmd"]), "thrust": np.array(log["thrust"]),
+              "rate_cmd": np.array(log["rate_cmd"]), "w": np.array(log["w"])}
+    # ZYX Euler angles, unwrapped so a flip reads as a smooth 0 -> 360 deg instead of jumping at +-180
+    Rs = np.array(log["R"])
+    euler = np.stack([np.arctan2(Rs[:, 2, 1], Rs[:, 2, 2]),
+                      -np.arcsin(np.clip(Rs[:, 2, 0], -1, 1)),
+                      np.arctan2(Rs[:, 1, 0], Rs[:, 0, 0])], 1)
+    series["angle"] = np.degrees(np.unwrap(euler, axis=0))
+    # (grid cell, y label, colour, [(series, column, style, legend label)])
+    panels = [(gs[1, :], "thrust [N]", "b", [("thrust_cmd", None, "--", "cmd"), ("thrust", None, "-", "actual")])]
+    for k, (name, col) in enumerate(zip(("roll", "pitch", "yaw"), ("C3", "C2", "C0"))):
+        panels += [(gs[k + 2, 0], f"{name} rate [rad/s]", col, [("rate_cmd", k, "--", "cmd"), ("w", k, "-", "actual")]),
+                   (gs[k + 2, 1], f"{name} [deg]", col, [("angle", k, "-", None)])]
+    lines = []  # (line, series name, column or None)
+    for cell, ylabel, col, curves in panels:
+        a = fig.add_subplot(cell)
+        ys = []
+        for key, c, style, label in curves:
+            lines.append((a.plot([], [], style, color=col, lw=1 if style == "--" else 1.5, label=label)[0], key, c))
+            ys.append(series[key] if c is None else series[key][:, c])
+        lo, hi = min(y.min() for y in ys), max(y.max() for y in ys)
+        pad = 0.1 * (hi - lo) + 1e-3
+        a.set_xlim(0, T[-1]); a.set_ylim(lo - pad, hi + pad); a.set_ylabel(ylabel, fontsize=8); a.grid(alpha=0.3)
+        a.tick_params(labelsize=7)
+        if "yaw" in ylabel:
+            a.set_xlabel("time [s]")
+        else:
+            a.tick_params(labelbottom=False)
+        if "thrust" in ylabel:
+            a.axhline(hover_force, color="gray", lw=0.5)
+            a.legend(loc="upper right", fontsize=7, ncol=2)
 
     def update(i):
         p, R = P[i], log["R"][i]
@@ -133,9 +174,12 @@ def animate(log, ctrl_dt, save=None):
         flip = f"  revs={log['revs'][i]:.2f}  flip_done={log['done'][i]}" if log["task"] == "flip" else ""
         text.set_text(f"t={i * ctrl_dt:.2f}s  dist to target={log['dist'][i]:.2f} m{flip}\n"
                       f"thrust={F:.1f} N ({F / hover_force:.2f}x hover)  reward={log['r'][i]:.1f}")
+        for line, key, col in lines:
+            y = series[key][: i + 1]
+            line.set_data(T[: i + 1], y if col is None else y[:, col])
         return arm1, arm2, front, trail, text
 
-    frames = range(0, len(P), 2)  # every 2nd step -> ~real time at 20 ms/frame
+    frames = range(0, len(P), max(1, round(0.02 / ctrl_dt)))  # ~real time at 20 ms/frame
     anim = FuncAnimation(fig, update, frames=frames, interval=20, blit=False)
     if save:
         anim.save(save, writer="pillow", fps=50)
