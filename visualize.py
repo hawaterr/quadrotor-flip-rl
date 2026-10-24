@@ -9,6 +9,7 @@ The policy name also picks the task: <name>_flip runs the flip env, everything e
     python visualize.py --policy random
     python visualize.py --policy ppo_hover        # trained model from train_ppo.py (ppo_hover.zip)
     python visualize.py --policy ppo_flip         # trained model from train_ppo.py --task flip (ppo_flip.zip)
+    python visualize.py --policy tdmpc2_flip      # trained agent from train_tdmpc2.py --task flip (tdmpc2_flip.pt), with MPPI
     python visualize.py --save hover.gif          # also save the animation
 """
 import argparse
@@ -21,11 +22,11 @@ from quad_env import TASKS, QuadEnv
 from quadrotor import G
 
 ARM = 0.15  # visual arm length [m]
-POLICIES = ["zero", "hover", "random"] + [f"{kind}_{task}" for kind in ("scripted", "ppo") for task in TASKS]
+POLICIES = ["zero", "hover", "random"] + [f"{kind}_{task}" for kind in ("scripted", "ppo", "tdmpc2") for task in TASKS]
 
 
 def task_of(policy):
-    """scripted_flip / ppo_flip -> "flip"; open-loop baselines run in the hover env."""
+    """scripted_flip / ppo_flip / tdmpc2_flip -> "flip"; open-loop baselines run in the hover env."""
     suffix = policy.rsplit("_", 1)[-1]
     return suffix if suffix in TASKS else "hover"
 
@@ -41,6 +42,10 @@ def make_policy(name, env):
         from stable_baselines3 import PPO
         model = PPO.load(name)  # ppo_<task>.zip, as saved by train_ppo.py
         return lambda obs, t: model.predict(obs, deterministic=True)[0]
+    if name.startswith("tdmpc2_"):
+        from tdmpc2 import TDMPC2
+        agent, _ = TDMPC2.load(f"{name}.pt")  # tdmpc2_<task>.pt, as saved by train_tdmpc2.py
+        return lambda obs, t: agent.act(obs, t0=t == 0, eval_mode=True)
 
     # scripted_hover: cascaded PD controller. Desired acceleration from position/velocity error sets the
     # desired thrust direction; body rates rotate body z towards it.
@@ -145,6 +150,10 @@ if __name__ == "__main__":
     ap.add_argument("--save", default=None, help="e.g. hover.gif")
     args = ap.parse_args()
 
-    env = QuadEnv(task=task_of(args.policy))
+    ctrl_dt = 0.01
+    if args.policy.startswith("tdmpc2_"):
+        import torch
+        ctrl_dt = torch.load(f"{args.policy}.pt", weights_only=False)["ctrl_dt"]  # it was trained at this step
+    env = QuadEnv(task=task_of(args.policy), ctrl_dt=ctrl_dt)
     log = rollout(env, make_policy(args.policy, env), args.seed)
     animate(log, env.ctrl_dt, args.save)
