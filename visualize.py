@@ -128,7 +128,7 @@ def animate(log, ctrl_dt, save=None):
     front, = ax.plot([], [], [], "ro", ms=3)          # marks one arm so you can see rotation
     trail, = ax.plot([], [], [], "-", color="gray", alpha=0.5)
     text = ax.text2D(0.02, 0.95, "", transform=ax.transAxes)
-    arrow = [None]                                    # quiver can't be updated in place, so we redraw it
+    arrow, = ax.plot([], [], [], "b-o", lw=2, ms=3, markevery=[1])  # thrust arrow (a line, so it can be blitted)
 
     hover_force = log["mass"] * G
     ARROW_PER_HOVER = 0.3                             # arrow length [m] at hover thrust (m*g)
@@ -183,9 +183,7 @@ def animate(log, ctrl_dt, save=None):
         # Thrust arrow: along body z, length proportional to thrust force
         F = log["thrust"][i]
         d = R @ [0, 0, ARROW_PER_HOVER * F / hover_force]
-        if arrow[0] is not None:
-            arrow[0].remove()
-        arrow[0] = ax.quiver(*p, *d, color="b", lw=2, arrow_length_ratio=0.25)
+        arrow.set_data_3d(*np.array([p, p + d]).T)
 
         trail.set_data_3d(*P[: i + 1].T)
         flip = f"  revs={log['revs'][i]:.2f}  flip_done={log['done'][i]}" if log["task"] == "flip" else ""
@@ -194,10 +192,11 @@ def animate(log, ctrl_dt, save=None):
         for line, key, col in lines:
             y = series[key][: i + 1]
             line.set_data(T[: i + 1], y if col is None else y[:, col])
-        return arm1, arm2, front, trail, text
+        # Everything that changes, so blitting redraws only these instead of the whole figure
+        return arm1, arm2, front, trail, text, arrow, *(line for line, _, _ in lines)
 
     frames = range(0, len(P), max(1, round(0.02 / ctrl_dt)))  # ~real time at 20 ms/frame
-    anim = FuncAnimation(fig, update, frames=frames, interval=20, blit=False)
+    anim = FuncAnimation(fig, update, frames=frames, interval=20, blit=True)
     if save:
         anim.save(save, writer="pillow", fps=50)
         print(f"saved {save}")
