@@ -72,19 +72,31 @@ class QuadEnv(gym.Env):
         return np.concatenate(parts).astype(np.float32)
 
     def reset(self, seed=None, options=None):
+        """options={"exact": True} (used for evaluation): with init_noise=0, start exactly at rest."""
         super().reset(seed=seed)
         rng = self.np_random
         s = self.init_noise
+
+        # Spread of the random start; every term scales with init_noise. During training, velocity and
+        # body rates also get a minimum spread, so even an init_noise=0 start differs a little each episode.
+        # "exact" removes that minimum. A spread of 0 means rng.normal returns exactly its mean, 0.
+        exact = (options or {}).get("exact", False)
+        min_std = 0.0 if exact else 0.1
+        tilt_std = 0.2 * s
+        pos_range = 0.5 * s
+        v_std = max(0.3 * s, min_std)
+        w_std = max(0.5 * s, min_std)
+
         # Random small tilt as an axis-angle -> quaternion
-        axis_angle = rng.normal(0, 0.2 * s, 3)
+        axis_angle = rng.normal(0, tilt_std, 3)
         angle = np.linalg.norm(axis_angle)
         axis = axis_angle / angle if angle > 1e-8 else np.array([1.0, 0, 0])
         q0 = np.concatenate([[np.cos(angle / 2)], np.sin(angle / 2) * axis])
         self.quad.reset(
-            p=self.target + rng.uniform(-0.5 * s, 0.5 * s, 3),
-            v=rng.normal(0, max(0.3 * s, 0.1), 3),
+            p=self.target + rng.uniform(-pos_range, pos_range, 3),
+            v=rng.normal(0, v_std, 3),
             q=q0,
-            w=rng.normal(0, max(0.5 * s, 0.1), 3),
+            w=rng.normal(0, w_std, 3),
         )
         self.roll_progress = 0.0
         self.flip_done = False

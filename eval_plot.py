@@ -5,7 +5,7 @@ import numpy as np
 
 def evaluate_and_plot(env, act, out_png):
     """act(obs, t) -> action. Saves the plot to out_png."""
-    obs, _ = env.reset(seed=0)
+    obs, _ = env.reset(seed=0, options={"exact": True})
     log = {"t": [], "pos_err": [], "dist": [], "upright": [], "w": [], "revs": [], "thrust": []}
     done = False
     while not done:

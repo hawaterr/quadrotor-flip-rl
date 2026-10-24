@@ -71,27 +71,38 @@ def make_policy(name, env):
 
 
 def rollout(env, policy, seed):
-    obs, _ = env.reset(seed=seed)
+    """Log the state at t = 0 (after reset) and after every step. Commands are logged per step and held over
+    the step that follows, so index i of every series is time i * ctrl_dt."""
+    obs, _ = env.reset(seed=seed, options={"exact": True})
     log = {"p": [], "R": [], "r": [], "dist": [], "revs": [], "done": [], "thrust": [],
            "thrust_cmd": [], "rate_cmd": [], "w": [], "mass": env.quad.m, "task": env.task}
     total = 0.0
+
+    def record():
+        q = env.quad
+        log["p"].append(q.p.copy())
+        log["R"].append(q.R.copy())
+        log["r"].append(total)
+        log["dist"].append(np.linalg.norm(q.p - env.target))
+        log["revs"].append(env.roll_progress / (2 * np.pi))
+        log["done"].append(env.flip_done)
+        log["thrust"].append(q.m * q.thrust_acc)  # actual thrust force [N] (after motor lag)
+        log["w"].append(q.w.copy())
+
+    record()
     for t in range(env.max_steps):
         action = np.clip(policy(obs, t), -1, 1)
-        obs, r, term, trunc, info = env.step(action)
         thrust_cmd, rate_cmd = env._scale_action(action)
-        total += r
-        log["p"].append(env.quad.p.copy())
-        log["R"].append(env.quad.R.copy())
-        log["r"].append(total)
-        log["dist"].append(info["dist"])
-        log["revs"].append(info["roll_progress"] / (2 * np.pi))
-        log["done"].append(info["flip_done"])
-        log["thrust"].append(env.quad.m * env.quad.thrust_acc)  # actual thrust force [N] (after motor lag)
         log["thrust_cmd"].append(env.quad.m * thrust_cmd)
         log["rate_cmd"].append(rate_cmd)
-        log["w"].append(env.quad.w.copy())
+        obs, r, term, trunc, info = env.step(action)
+        total += r
+        record()
         if term or trunc:
             break
+    # Repeat the last command so commands line up with the states (it is held until the end)
+    log["thrust_cmd"].append(log["thrust_cmd"][-1])
+    log["rate_cmd"].append(log["rate_cmd"][-1])
     flip = f"  flip_done={info['flip_done']}" if env.task == "flip" else ""
     print(f"steps={t + 1}  total reward={total:.2f}  final dist={info['dist']:.3f}{flip}  "
           f"final upright={env.quad.R[2, 2]:.2f}  final z={env.quad.p[2]:.2f}  crashed={term}")
@@ -121,9 +132,9 @@ def animate(log, ctrl_dt, save=None):
     hover_force = log["mass"] * G
     ARROW_PER_HOVER = 0.3                             # arrow length [m] at hover thrust (m*g)
 
-    # Under the 3D view, drawn up to the current time: thrust across the top, then one row per axis
-    # with the body rate (dashed = commanded, solid = actual) on the left and the attitude angle on the right
-    T = np.arange(1, len(P) + 1) * ctrl_dt
+    # Under the 3D view, drawn up to the current time. Left column: commands (dashed) vs actual (solid) for
+    # thrust and the body rates. Right column: height and the attitude angles. All share one time axis.
+    T = np.arange(len(P)) * ctrl_dt
     series = {"thrust_cmd": np.array(log["thrust_cmd"]), "thrust": np.array(log["thrust"]),
               "rate_cmd": np.array(log["rate_cmd"]), "w": np.array(log["w"])}
     # ZYX Euler angles, unwrapped so a flip reads as a smooth 0 -> 360 deg instead of jumping at +-180
@@ -133,7 +144,9 @@ def animate(log, ctrl_dt, save=None):
                       np.arctan2(Rs[:, 1, 0], Rs[:, 0, 0])], 1)
     series["angle"] = np.degrees(np.unwrap(euler, axis=0))
     # (grid cell, y label, colour, [(series, column, style, legend label)])
-    panels = [(gs[1, :], "thrust [N]", "b", [("thrust_cmd", None, "--", "cmd"), ("thrust", None, "-", "actual")])]
+    series["z"] = P[:, 2]
+    panels = [(gs[1, 0], "thrust [N]", "b", [("thrust_cmd", None, "--", "cmd"), ("thrust", None, "-", "actual")]),
+              (gs[1, 1], "height z [m]", "k", [("z", None, "-", None)])]
     for k, (name, col) in enumerate(zip(("roll", "pitch", "yaw"), ("C3", "C2", "C0"))):
         panels += [(gs[k + 2, 0], f"{name} rate [rad/s]", col, [("rate_cmd", k, "--", "cmd"), ("w", k, "-", "actual")]),
                    (gs[k + 2, 1], f"{name} [deg]", col, [("angle", k, "-", None)])]
@@ -142,7 +155,10 @@ def animate(log, ctrl_dt, save=None):
         a = fig.add_subplot(cell)
         ys = []
         for key, c, style, label in curves:
-            lines.append((a.plot([], [], style, color=col, lw=1 if style == "--" else 1.5, label=label)[0], key, c))
+            # Commands are held over each step, so draw them as steps
+            draw = "steps-post" if style == "--" else "default"
+            lines.append((a.plot([], [], style, color=col, lw=1 if style == "--" else 1.5, label=label,
+                                 drawstyle=draw)[0], key, c))
             ys.append(series[key] if c is None else series[key][:, c])
         lo, hi = min(y.min() for y in ys), max(y.max() for y in ys)
         pad = 0.1 * (hi - lo) + 1e-3
