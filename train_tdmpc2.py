@@ -135,11 +135,13 @@ def animate_pendulum(thetas, torques, dt):
     return anim
 
 
-def evaluate(task, plan=True):
+def evaluate(task, plan=True, seed=0):
     agent, ckpt = TDMPC2.load(f"tdmpc2_{task}.pt")
+    # MPPI and the policy sample with torch/numpy, so seed those too for a repeatable rollout
+    torch.manual_seed(seed); np.random.seed(seed)
     if task == "pendulum":
         env = make_env(task, None, train=False)
-        obs, _ = env.reset(seed=1)
+        obs, _ = env.reset(seed=seed)
         total, done, t = 0.0, False, 0
         thetas, torques = [np.arctan2(obs[1], obs[0])], []  # obs = [cos, sin, angular velocity]; 0 = upright
         while not done:
@@ -154,7 +156,7 @@ def evaluate(task, plan=True):
     from eval_plot import evaluate_and_plot
     evaluate_and_plot(make_env(task, ckpt["ctrl_dt"], train=False),
                       lambda obs, t: agent.act(obs, t0=t == 0, eval_mode=True, plan=plan),
-                      f"{task}_tdmpc2_eval.png")
+                      f"{task}_tdmpc2_eval.png", seed=seed)
 
 
 if __name__ == "__main__":
@@ -162,6 +164,7 @@ if __name__ == "__main__":
     ap.add_argument("--task", default="hover", choices=TASKS + ("pendulum",))
     ap.add_argument("--eval", action="store_true")
     ap.add_argument("--no-plan", action="store_true", help="eval: act with the policy prior instead of MPPI")
+    ap.add_argument("--seed", type=int, default=0, help="eval: seed of the episode's starting state")
     ap.add_argument("--steps", type=int, default=200_000)
     # A flip takes ~0.6 s; a 3-step plan at 0.01 s only sees 30 ms, so act at 0.02 s by default
     ap.add_argument("--ctrl-dt", type=float, default=0.02)
@@ -174,7 +177,7 @@ if __name__ == "__main__":
     torch.set_num_threads(args.threads)
 
     if args.eval:
-        evaluate(args.task, plan=not args.no_plan)
+        evaluate(args.task, plan=not args.no_plan, seed=args.seed)
     else:
         # Same effective horizon as PPO's gamma=0.99 at 0.01 s steps (~1 s)
         discount = 0.99 if args.task == "pendulum" else 0.99 ** (args.ctrl_dt / 0.01)

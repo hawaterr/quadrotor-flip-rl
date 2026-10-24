@@ -3,9 +3,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
-def evaluate_and_plot(env, act, out_png):
+def evaluate_and_plot(env, act, out_png, seed=0):
     """act(obs, t) -> action. Saves the plot to out_png."""
-    obs, _ = env.reset(seed=0, options={"exact": True})
+    obs, _ = env.reset(seed=seed, options={"exact": True})
     log = {"t": [], "pos_err": [], "dist": [], "upright": [], "w": [], "revs": [], "thrust": []}
     done = False
     while not done:

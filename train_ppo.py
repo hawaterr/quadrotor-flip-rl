@@ -30,16 +30,17 @@ def train(task, steps):
     print(f"saved ppo_{task}.zip")
 
 
-def evaluate(task):
+def evaluate(task, seed=0):
     model = PPO.load(f"ppo_{task}")
     evaluate_and_plot(QuadEnv(task=task), lambda obs, t: model.predict(obs, deterministic=True)[0],
-                      f"{task}_eval.png")
+                      f"{task}_eval.png", seed=seed)
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--task", default="hover", choices=TASKS)
     ap.add_argument("--eval", action="store_true")
+    ap.add_argument("--seed", type=int, default=0, help="eval: seed of the episode's starting state")
     ap.add_argument("--steps", type=int, default=1_000_000)
     args = ap.parse_args()
-    evaluate(args.task) if args.eval else train(args.task, args.steps)
+    evaluate(args.task, args.seed) if args.eval else train(args.task, args.steps)
