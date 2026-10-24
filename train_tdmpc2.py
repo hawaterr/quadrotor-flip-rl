@@ -106,29 +106,24 @@ def train(task, steps, ctrl_dt, plan_after, cfg):
 
 
 def animate_pendulum(thetas, torques, dt):
-    """Swinging rod on the left, angle and torque over time on the right."""
+    """Swinging rod on the left, torque over time on the right."""
     import matplotlib.pyplot as plt
     from matplotlib.animation import FuncAnimation
 
     T = np.arange(len(thetas)) * dt
-    fig, (ax, ax_th, ax_u) = plt.subplots(1, 3, figsize=(12, 4), gridspec_kw={"width_ratios": [1.2, 1, 1]})
+    fig, (ax, ax_u) = plt.subplots(1, 2, figsize=(9, 4), gridspec_kw={"width_ratios": [1.2, 1]})
     ax.set_xlim(-1.2, 1.2); ax.set_ylim(-1.2, 1.2); ax.set_aspect("equal"); ax.axis("off")
     rod, = ax.plot([], [], "-o", color="C3", lw=4, ms=8, markevery=[1])  # dot = the free end
     ax.plot(0, 0, "ks", ms=8)  # pivot
     text = ax.text(-1.15, 1.1, "")
-    deg = np.degrees(np.unwrap(thetas))
-    ax_th.set_xlim(0, T[-1]); ax_th.set_ylim(deg.min() - 20, deg.max() + 20)
-    ax_th.axhline(0, color="gray", lw=0.5); ax_th.set_ylabel("angle [deg] (0 = upright)"); ax_th.set_xlabel("time [s]")
     ax_u.set_xlim(0, T[-1]); ax_u.set_ylim(-2.2, 2.2); ax_u.set_ylabel("torque"); ax_u.set_xlabel("time [s]")
-    th_line, = ax_th.plot([], [], "C3")
     u_line, = ax_u.plot([], [], "C0", drawstyle="steps-post")
 
     def update(i):
         rod.set_data([0, np.sin(thetas[i])], [0, np.cos(thetas[i])])
         text.set_text(f"t={T[i]:.2f}s")
-        th_line.set_data(T[: i + 1], deg[: i + 1])
         u_line.set_data(T[: min(i + 1, len(torques))], torques[: i + 1])
-        return rod, text, th_line, u_line
+        return rod, text, u_line
 
     anim = FuncAnimation(fig, update, frames=len(thetas), interval=dt * 1000, blit=False)
     plt.tight_layout(); plt.show()
