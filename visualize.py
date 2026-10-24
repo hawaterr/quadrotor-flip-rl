@@ -10,6 +10,7 @@ The policy name also picks the task: <name>_flip runs the flip env, everything e
     python visualize.py --policy ppo_hover        # trained model from train_ppo.py (ppo_hover.zip)
     python visualize.py --policy ppo_flip         # trained model from train_ppo.py --task flip (ppo_flip.zip)
     python visualize.py --policy tdmpc2_flip      # trained agent from train_tdmpc2.py --task flip (tdmpc2_flip.pt), with MPPI
+    python visualize.py --policy tdmpc2_flip --no-plan   # same agent, policy prior only (no MPPI)
     python visualize.py --save hover.gif          # also save the animation
 """
 import argparse
@@ -31,7 +32,7 @@ def task_of(policy):
     return suffix if suffix in TASKS else "hover"
 
 
-def make_policy(name, env):
+def make_policy(name, env, plan=True):
     if name == "zero":
         return lambda obs, t: np.array([-1.0, 0, 0, 0])          # thrust off
     if name == "hover":
@@ -45,7 +46,7 @@ def make_policy(name, env):
     if name.startswith("tdmpc2_"):
         from tdmpc2 import TDMPC2
         agent, _ = TDMPC2.load(f"{name}.pt")  # tdmpc2_<task>.pt, as saved by train_tdmpc2.py
-        return lambda obs, t: agent.act(obs, t0=t == 0, eval_mode=True)
+        return lambda obs, t: agent.act(obs, t0=t == 0, eval_mode=True, plan=plan)
 
     # scripted_hover: cascaded PD controller. Desired acceleration from position/velocity error sets the
     # desired thrust direction; body rates rotate body z towards it.
@@ -208,6 +209,7 @@ if __name__ == "__main__":
     ap.add_argument("--policy", default="scripted_hover", choices=POLICIES)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--save", default=None, help="e.g. hover.gif")
+    ap.add_argument("--no-plan", action="store_true", help="tdmpc2_*: act with the policy prior instead of MPPI")
     args = ap.parse_args()
 
     ctrl_dt = 0.01
@@ -215,5 +217,5 @@ if __name__ == "__main__":
         import torch
         ctrl_dt = torch.load(f"{args.policy}.pt", weights_only=False)["ctrl_dt"]  # it was trained at this step
     env = QuadEnv(task=task_of(args.policy), ctrl_dt=ctrl_dt)
-    log = rollout(env, make_policy(args.policy, env), args.seed)
+    log = rollout(env, make_policy(args.policy, env, plan=not args.no_plan), args.seed)
     animate(log, env.ctrl_dt, args.save)
