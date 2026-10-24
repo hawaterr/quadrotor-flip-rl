@@ -52,7 +52,7 @@ def make_policy(name, env):
         thrust = a_des @ q.R[:, 2]
         a0 = (thrust - G) / (q.max_thrust_acc - G) if thrust >= G else thrust / G - 1.0
         return np.clip(np.array([a0, *(rates / q.max_rate)]), -1, 1)
-    if env.task == "hover":
+    if name == "scripted_hover":
         return pd
 
     # scripted_flip: climb, roll until one revolution, then recover with the PD controller

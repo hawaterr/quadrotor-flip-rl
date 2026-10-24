@@ -15,9 +15,11 @@ from quad_env import TASKS, QuadEnv
 
 
 def train(task, steps):
-    env = make_vec_env(QuadEnv, n_envs=8, env_kwargs=dict(task=task))
+    flip = task == "flip"
+    # Flip: half the episodes start mid-roll, and a little entropy keeps it exploring rolls
+    env = make_vec_env(QuadEnv, n_envs=8, env_kwargs=dict(task=task, mid_flip_prob=0.5 if flip else 0.0))
     model = PPO("MlpPolicy", env, n_steps=1024, batch_size=2048, gamma=0.99,
-                learning_rate=3e-4, ent_coef=0.0, verbose=1,
+                learning_rate=3e-4, ent_coef=0.005 if flip else 0.0, verbose=1,
                 policy_kwargs=dict(net_arch=[128, 128]), tensorboard_log="runs")
     try:
         model.learn(total_timesteps=steps)
