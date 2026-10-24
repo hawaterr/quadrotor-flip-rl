@@ -19,8 +19,14 @@ def train(task, steps):
     model = PPO("MlpPolicy", env, n_steps=1024, batch_size=2048, gamma=0.99,
                 learning_rate=3e-4, ent_coef=0.0, verbose=1,
                 policy_kwargs=dict(net_arch=[128, 128]), tensorboard_log="runs")
-    model.learn(total_timesteps=steps)
+    try:
+        model.learn(total_timesteps=steps)
+    except KeyboardInterrupt:
+        print(f"\ninterrupted at {model.num_timesteps} steps, saving what we have")
+    finally:
+        env.close()
     model.save(f"ppo_{task}")
+    print(f"saved ppo_{task}.zip")
 
 
 def evaluate(task):
