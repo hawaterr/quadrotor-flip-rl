@@ -6,11 +6,10 @@
 """
 import argparse
 
-import matplotlib.pyplot as plt
-import numpy as np
 from stable_baselines3 import PPO
 from stable_baselines3.common.env_util import make_vec_env
 
+from eval_plot import evaluate_and_plot
 from quad_env import TASKS, QuadEnv
 
 
@@ -32,40 +31,9 @@ def train(task, steps):
 
 
 def evaluate(task):
-    env = QuadEnv(task=task)
     model = PPO.load(f"ppo_{task}")
-    obs, _ = env.reset(seed=0)
-    log = {"t": [], "pos_err": [], "dist": [], "upright": [], "w": [], "revs": [], "thrust": []}
-    done = False
-    while not done:
-        action, _ = model.predict(obs, deterministic=True)
-        obs, _, term, trunc, info = env.step(action)
-        done = term or trunc
-        q = env.quad
-        log["t"].append(env.t * env.ctrl_dt)
-        log["pos_err"].append(q.p - env.target)
-        log["dist"].append(info["dist"])
-        log["upright"].append(q.R[2, 2])
-        log["w"].append(np.linalg.norm(q.w))
-        log["revs"].append(info["roll_progress"] / (2 * np.pi))
-        log["thrust"].append(q.thrust_acc)
-    if task == "flip":
-        print(f"flip done: {info['flip_done']}")
-    print(f"crashed: {term}, final dist: {log['dist'][-1]:.3f} m, final upright: {log['upright'][-1]:.2f}")
-
-    err = np.array(log["pos_err"])
-    n = 5 if task == "flip" else 4
-    fig, axs = plt.subplots(n, 1, sharex=True, figsize=(7, 2.25 * n))
-    for i, name in enumerate("xyz"):
-        axs[0].plot(log["t"], err[:, i], label=name)
-    axs[0].legend(); axs[0].set_ylabel("pos error [m]")
-    axs[1].plot(log["t"], log["upright"]); axs[1].set_ylabel("R[2,2] (1=level)")
-    axs[2].plot(log["t"], log["w"]); axs[2].set_ylabel("|body rate| [rad/s]")
-    axs[3].plot(log["t"], log["thrust"]); axs[3].set_ylabel("thrust acc [m/s²]")
-    if task == "flip":
-        axs[4].plot(log["t"], log["revs"]); axs[4].set_ylabel("roll revs")
-    axs[-1].set_xlabel("time [s]")
-    plt.tight_layout(); plt.savefig(f"{task}_eval.png"); plt.show()
+    evaluate_and_plot(QuadEnv(task=task), lambda obs, t: model.predict(obs, deterministic=True)[0],
+                      f"{task}_eval.png")
 
 
 if __name__ == "__main__":

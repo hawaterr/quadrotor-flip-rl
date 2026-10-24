@@ -10,6 +10,8 @@ venv/
 runs/
 # Saved SB3 models, e.g. ppo_flip.zip
 *.zip
+# Saved TD-MPC2 agents, e.g. tdmpc2_flip.pt
+*.pt
 checkpoints/
 logs/
 wandb/
