@@ -21,6 +21,9 @@ wandb/
 /*.gif
 /*.mp4
 
+# PDFs (papers, exported figures)
+*.pdf
+
 # Editors / OS
 .vscode/
 .DS_Store
