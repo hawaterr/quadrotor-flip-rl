@@ -105,16 +105,51 @@ def train(task, steps, ctrl_dt, plan_after, cfg):
     print(f"saved tdmpc2_{task}.pt")
 
 
+def animate_pendulum(thetas, torques, dt):
+    """Swinging rod on the left, angle and torque over time on the right."""
+    import matplotlib.pyplot as plt
+    from matplotlib.animation import FuncAnimation
+
+    T = np.arange(len(thetas)) * dt
+    fig, (ax, ax_th, ax_u) = plt.subplots(1, 3, figsize=(12, 4), gridspec_kw={"width_ratios": [1.2, 1, 1]})
+    ax.set_xlim(-1.2, 1.2); ax.set_ylim(-1.2, 1.2); ax.set_aspect("equal"); ax.axis("off")
+    rod, = ax.plot([], [], "-o", color="C3", lw=4, ms=8, markevery=[1])  # dot = the free end
+    ax.plot(0, 0, "ks", ms=8)  # pivot
+    text = ax.text(-1.15, 1.1, "")
+    deg = np.degrees(np.unwrap(thetas))
+    ax_th.set_xlim(0, T[-1]); ax_th.set_ylim(deg.min() - 20, deg.max() + 20)
+    ax_th.axhline(0, color="gray", lw=0.5); ax_th.set_ylabel("angle [deg] (0 = upright)"); ax_th.set_xlabel("time [s]")
+    ax_u.set_xlim(0, T[-1]); ax_u.set_ylim(-2.2, 2.2); ax_u.set_ylabel("torque"); ax_u.set_xlabel("time [s]")
+    th_line, = ax_th.plot([], [], "C3")
+    u_line, = ax_u.plot([], [], "C0", drawstyle="steps-post")
+
+    def update(i):
+        rod.set_data([0, np.sin(thetas[i])], [0, np.cos(thetas[i])])
+        text.set_text(f"t={T[i]:.2f}s")
+        th_line.set_data(T[: i + 1], deg[: i + 1])
+        u_line.set_data(T[: min(i + 1, len(torques))], torques[: i + 1])
+        return rod, text, th_line, u_line
+
+    anim = FuncAnimation(fig, update, frames=len(thetas), interval=dt * 1000, blit=False)
+    plt.tight_layout(); plt.show()
+    return anim
+
+
 def evaluate(task, plan=True):
     agent, ckpt = TDMPC2.load(f"tdmpc2_{task}.pt")
     if task == "pendulum":
         env = make_env(task, None, train=False)
-        obs, _ = env.reset(seed=0)
+        obs, _ = env.reset(seed=1)
         total, done, t = 0.0, False, 0
+        thetas, torques = [np.arctan2(obs[1], obs[0])], []  # obs = [cos, sin, angular velocity]; 0 = upright
         while not done:
-            obs, r, term, trunc, _ = env.step(agent.act(obs, t0=t == 0, eval_mode=True, plan=plan))
+            a = agent.act(obs, t0=t == 0, eval_mode=True, plan=plan)
+            obs, r, term, trunc, _ = env.step(a)
             total, done, t = total + r, term or trunc, t + 1
+            thetas.append(np.arctan2(obs[1], obs[0]))
+            torques.append(2.0 * a[0])  # action is rescaled to [-1, 1]; Pendulum-v1 torque is in [-2, 2]
         print(f"pendulum return: {total:.1f}")
+        animate_pendulum(np.array(thetas), np.array(torques), dt=0.05)  # Pendulum-v1 steps at 0.05 s
         return
     from eval_plot import evaluate_and_plot
     evaluate_and_plot(make_env(task, ckpt["ctrl_dt"], train=False),
