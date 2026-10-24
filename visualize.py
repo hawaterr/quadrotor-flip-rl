@@ -91,8 +91,10 @@ def rollout(env, policy, seed):
         log["w"].append(q.w.copy())
 
     record()
+    action_change = []  # sum over the 4 commands of |a - previous a|; large = chattering
     for t in range(env.max_steps):
         action = np.clip(policy(obs, t), -1, 1)
+        action_change.append(np.abs(action - env.prev_action).sum())
         thrust_cmd, rate_cmd = env._scale_action(action)
         log["thrust_cmd"].append(env.quad.m * thrust_cmd)
         log["rate_cmd"].append(rate_cmd)
@@ -106,7 +108,8 @@ def rollout(env, policy, seed):
     log["rate_cmd"].append(log["rate_cmd"][-1])
     flip = f"  flip_done={info['flip_done']}" if env.task == "flip" else ""
     print(f"steps={t + 1}  total reward={total:.2f}  final dist={info['dist']:.3f}{flip}  "
-          f"final upright={env.quad.R[2, 2]:.2f}  final z={env.quad.p[2]:.2f}  crashed={term}")
+          f"final upright={env.quad.R[2, 2]:.2f}  final z={env.quad.p[2]:.2f}  crashed={term}  "
+          f"mean |a - prev a|={np.mean(action_change):.2f}")
     return log
 
 
@@ -211,10 +214,11 @@ if __name__ == "__main__":
     ap.add_argument("--no-plan", action="store_true", help="tdmpc2_*: act with the policy prior instead of MPPI")
     args = ap.parse_args()
 
-    ctrl_dt = 0.01
+    ctrl_dt, smooth_coef = 0.01, None
     if args.policy.startswith("tdmpc2_"):
         import torch
-        ctrl_dt = torch.load(f"{args.policy}.pt", weights_only=False)["ctrl_dt"]  # it was trained at this step
-    env = QuadEnv(task=task_of(args.policy), ctrl_dt=ctrl_dt)
+        ckpt = torch.load(f"{args.policy}.pt", weights_only=False)
+        ctrl_dt, smooth_coef = ckpt["ctrl_dt"], ckpt.get("smooth_coef")  # the env it was trained in
+    env = QuadEnv(task=task_of(args.policy), ctrl_dt=ctrl_dt, smooth_coef=smooth_coef)
     log = rollout(env, make_policy(args.policy, env, plan=not args.no_plan), args.seed)
     animate(log, env.ctrl_dt, args.save)

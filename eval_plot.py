@@ -7,9 +7,11 @@ def evaluate_and_plot(env, act, out_png, seed=0):
     """act(obs, t) -> action. Saves the plot to out_png."""
     obs, _ = env.reset(seed=seed, options={"exact": True})
     log = {"t": [], "pos_err": [], "dist": [], "upright": [], "w": [], "revs": [], "thrust": []}
-    done = False
+    done, action_change = False, []
     while not done:
-        obs, _, term, trunc, info = env.step(act(obs, env.t))
+        action = np.clip(act(obs, env.t), -1, 1)
+        action_change.append(np.abs(action - env.prev_action).sum())
+        obs, _, term, trunc, info = env.step(action)
         done = term or trunc
         q = env.quad
         log["t"].append(env.t * env.ctrl_dt)
@@ -22,7 +24,8 @@ def evaluate_and_plot(env, act, out_png, seed=0):
     task = env.task
     if task == "flip":
         print(f"flip done: {info['flip_done']}")
-    print(f"crashed: {term}, final dist: {log['dist'][-1]:.3f} m, final upright: {log['upright'][-1]:.2f}")
+    print(f"crashed: {term}, final dist: {log['dist'][-1]:.3f} m, final upright: {log['upright'][-1]:.2f}, "
+          f"mean |a - prev a|: {np.mean(action_change):.2f}")
 
     err = np.array(log["pos_err"])
     n = 5 if task == "flip" else 4

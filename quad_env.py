@@ -18,13 +18,16 @@ TASKS = ("hover", "flip")
 EPISODE_TIME = {"hover": 5.0, "flip": 2.0}
 INIT_NOISE = {"hover": 1.0, "flip": 0.0}
 MAX_DIST = {"hover": 3.0, "flip": 6.0}  # a flip needs room to climb first
+# Weight of the ||action - previous action||^2 penalty. The flip needs it stronger: the rate controller filters
+# out step-to-step chattering, so with a weak penalty the agent learns to chatter almost for free.
+SMOOTH_COEF = {"hover": 0.01, "flip": 0.1}
 
 
 class QuadEnv(gym.Env):
     metadata = {"render_modes": []}
 
     def __init__(self, task="hover", ctrl_dt=0.01, episode_time=None, target=(0.0, 0.0, 3.0),
-                 min_height=0.5, max_dist=None, init_noise=None, mid_flip_prob=0.0):
+                 min_height=0.5, max_dist=None, init_noise=None, mid_flip_prob=0.0, smooth_coef=None):
         if task not in TASKS:
             raise ValueError(f"task must be one of {TASKS}, got {task!r}")
         self.task = task
@@ -40,6 +43,7 @@ class QuadEnv(gym.Env):
         # flip only: fraction of episodes that start part-way through a roll (training curriculum,
         # so the agent sees "finish the flip and recover" without first discovering a full roll)
         self.mid_flip_prob = mid_flip_prob
+        self.smooth_coef = SMOOTH_COEF[task] if smooth_coef is None else smooth_coef
 
         self.action_space = spaces.Box(-1.0, 1.0, shape=(4,), dtype=np.float32)
         # rot matrix (9) + body rates (3) + velocity (3) + position error (3) + previous action (4)
@@ -142,7 +146,7 @@ class QuadEnv(gym.Env):
         reward += 0.2 * upright
         reward -= 0.05 * np.linalg.norm(q.w)
         reward -= 0.05 * np.linalg.norm(q.v)
-        reward -= 0.01 * np.sum((action - self.prev_action) ** 2)
+        reward -= self.smooth_coef * np.sum((action - self.prev_action) ** 2)
         terminated = bool(q.p[2] < self.min_height or dist > self.max_dist)
         return reward, terminated
 
@@ -167,6 +171,6 @@ class QuadEnv(gym.Env):
         # Stay near the start point (climbing away is not free), keep actions smooth.
         # The first 3 m are free: a flip needs to climb first and ends up above the start.
         reward -= 0.5 * max(0.0, dist - 3.0)
-        reward -= 0.01 * np.sum((action - self.prev_action) ** 2)
+        reward -= self.smooth_coef * np.sum((action - self.prev_action) ** 2)
         terminated = bool(q.p[2] < self.min_height or dist > self.max_dist)
         return reward, terminated

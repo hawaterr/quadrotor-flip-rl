@@ -17,11 +17,12 @@ from quad_env import TASKS, QuadEnv
 from tdmpc2 import TDMPC2, Config
 
 
-def make_env(task, ctrl_dt, train=True):
+def make_env(task, ctrl_dt, train=True, smooth_coef=None):
     if task == "pendulum":
         return gym.wrappers.RescaleAction(gym.make("Pendulum-v1"), -1.0, 1.0)
     # Flip: half the training episodes start mid-roll, as for PPO
-    return QuadEnv(task=task, ctrl_dt=ctrl_dt, mid_flip_prob=0.5 if (train and task == "flip") else 0.0)
+    return QuadEnv(task=task, ctrl_dt=ctrl_dt, mid_flip_prob=0.5 if (train and task == "flip") else 0.0,
+                   smooth_coef=smooth_coef)
 
 
 class Buffer:
@@ -53,8 +54,8 @@ class Buffer:
         return t(obs), t(self.action[s]), t(self.reward[s]), t(self.terminated[s])
 
 
-def train(task, steps, ctrl_dt, plan_after, cfg):
-    env = make_env(task, ctrl_dt)
+def train(task, steps, ctrl_dt, plan_after, cfg, smooth_coef=None):
+    env = make_env(task, ctrl_dt, smooth_coef=smooth_coef)
     obs_dim, act_dim = env.observation_space.shape[0], env.action_space.shape[0]
     agent = TDMPC2(obs_dim, act_dim, cfg)
     buf = Buffer(obs_dim, act_dim, steps, cfg.horizon)
@@ -101,7 +102,7 @@ def train(task, steps, ctrl_dt, plan_after, cfg):
         print(f"\ninterrupted at {step} steps, saving what we have")
     finally:
         writer.close()
-    agent.save(f"tdmpc2_{task}.pt", task=task, ctrl_dt=ctrl_dt)
+    agent.save(f"tdmpc2_{task}.pt", task=task, ctrl_dt=ctrl_dt, smooth_coef=getattr(env, "smooth_coef", None))
     print(f"saved tdmpc2_{task}.pt")
 
 
@@ -149,7 +150,7 @@ def evaluate(task, plan=True, seed=0):
         animate_pendulum(np.array(thetas), np.array(torques), dt=0.05)  # Pendulum-v1 steps at 0.05 s
         return
     from eval_plot import evaluate_and_plot
-    evaluate_and_plot(make_env(task, ckpt["ctrl_dt"], train=False),
+    evaluate_and_plot(make_env(task, ckpt["ctrl_dt"], train=False, smooth_coef=ckpt.get("smooth_coef")),
                       lambda obs, t: agent.act(obs, t0=t == 0, eval_mode=True, plan=plan),
                       f"{task}_tdmpc2_eval.png", seed=seed)
 
@@ -163,6 +164,8 @@ if __name__ == "__main__":
     ap.add_argument("--steps", type=int, default=200_000)
     # A flip takes ~0.6 s; a 3-step plan at 0.01 s only sees 30 ms, so act at 0.02 s by default
     ap.add_argument("--ctrl-dt", type=float, default=0.02)
+    ap.add_argument("--smooth-coef", type=float, default=None,
+                    help="weight of the action-change penalty (default: per task, see quad_env.SMOOTH_COEF)")
     ap.add_argument("--plan-after", type=int, default=0,
                     help="act with the policy prior (fast) until this step, then with MPPI")
     ap.add_argument("--samples", type=int, default=512, help="MPPI samples (fewer = faster)")
@@ -177,4 +180,4 @@ if __name__ == "__main__":
         # Same effective horizon as PPO's gamma=0.99 at 0.01 s steps (~1 s)
         discount = 0.99 if args.task == "pendulum" else 0.99 ** (args.ctrl_dt / 0.01)
         cfg = Config(discount=discount, num_samples=args.samples, iterations=args.iterations)
-        train(args.task, args.steps, args.ctrl_dt, args.plan_after, cfg)
+        train(args.task, args.steps, args.ctrl_dt, args.plan_after, cfg, args.smooth_coef)
