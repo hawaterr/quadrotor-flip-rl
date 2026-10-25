@@ -12,6 +12,7 @@ Settings: configs/animate_rollout.yaml; override any of them as key=value.
     python animate_rollout.py policy=ppo_flip           # trained model from ppo/train_ppo.py task=flip (models/ppo_flip.zip)
     python animate_rollout.py policy=tdmpc2_flip        # trained agent from tdmpc2/train_tdmpc2.py task=flip, with MPPI
     python animate_rollout.py policy=tdmpc2_flip plan=false    # same agent, policy prior only (no MPPI)
+    python animate_rollout.py policy=ppo_flip_v1        # any model file in models/ named ppo_* or tdmpc2_*
     python animate_rollout.py save=plots/hover.gif      # also save the animation
 """
 import os
@@ -20,20 +21,45 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.animation import FuncAnimation
 
-from configs import env_from_checkpoint, load_config
+from configs import env_from_checkpoint, load_config, load_env
 from envs.eval_plot import SETTLE_WINDOW
 from envs.quad_env import TASKS, QuadEnv
 from envs.quadrotor import G
 
 ARM = 0.15  # visual arm length [m]
 FRAME_DT = 0.02  # s per animation frame (50 fps); frames are picked so playback is about real time
-POLICIES = ["zero", "hover", "random"] + [f"{kind}_{task}" for kind in ("scripted", "ppo", "tdmpc2") for task in TASKS]
+BASELINES = ["zero", "hover", "random"] + [f"scripted_{task}" for task in TASKS]
+MODEL_FILES = {"ppo_": ".zip", "tdmpc2_": ".pt"}  # trained models in models/: name prefix -> file extension
+
+
+def trained_models():
+    """Names of the trained models in models/, e.g. ppo_flip, ppo_flip_v1, tdmpc2_flip_prev."""
+    if not os.path.isdir("models"):
+        return []
+    names = []
+    for f in sorted(os.listdir("models")):
+        stem, ext = os.path.splitext(f)
+        if any(stem.startswith(p) and ext == e for p, e in MODEL_FILES.items()) and not stem.endswith(".tmp"):
+            names.append(stem)
+    return names
 
 
 def task_of(policy):
-    """scripted_flip / ppo_flip / tdmpc2_flip -> "flip"; open-loop baselines run in the hover env."""
-    suffix = policy.rsplit("_", 1)[-1]
-    return suffix if suffix in TASKS else "hover"
+    """The first task named in the policy (ppo_flip_v1 -> flip); open-loop baselines run in the hover env."""
+    return next((part for part in policy.split("_") if part in TASKS), "hover")
+
+
+def env_config_for(policy):
+    """Trained models run in the env they were trained in (saved with the model); baselines use env.yaml."""
+    task = task_of(policy)
+    if policy.startswith("tdmpc2_"):
+        import torch
+        ckpt = torch.load(f"models/{policy}.pt", weights_only=False)
+        return env_from_checkpoint(ckpt, ckpt.get("task", task))
+    if policy.startswith("ppo_"):
+        from ppo.train_ppo import saved_env_config
+        return saved_env_config(task, policy)
+    return load_env(task)
 
 
 def make_policy(name, env, plan=True, scripted=None):
@@ -222,17 +248,9 @@ def animate(log, policy_dt, save=None, start_pause=0.0):
 
 if __name__ == "__main__":
     cfg = load_config("animate_rollout")
-    if cfg.policy not in POLICIES:
-        raise ValueError(f"policy must be one of {POLICIES}, got {cfg.policy!r}")
-
-    # Trained policies run in the env they were trained in (saved with the model); the rest use configs/env.yaml
-    task, env_cfg = task_of(cfg.policy), None
-    if cfg.policy.startswith("tdmpc2_"):
-        import torch
-        env_cfg = env_from_checkpoint(torch.load(f"models/{cfg.policy}.pt", weights_only=False), task)
-    elif cfg.policy.startswith("ppo_"):
-        from ppo.train_ppo import saved_env_config
-        env_cfg = saved_env_config(task)
-    env = QuadEnv(task=task, cfg=env_cfg)
+    if cfg.policy not in BASELINES + trained_models():
+        raise ValueError(f"policy must be a baseline {BASELINES} or a model in models/ {trained_models()}, "
+                         f"got {cfg.policy!r}")
+    env = QuadEnv(cfg=env_config_for(cfg.policy))
     log = rollout(env, make_policy(cfg.policy, env, plan=cfg.plan, scripted=cfg.scripted), cfg.seed)
     animate(log, env.policy_dt, cfg.save, cfg.start_pause)
