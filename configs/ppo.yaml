@@ -1,0 +1,20 @@
+# PPO (Stable-Baselines3). Override anything on the command line, e.g.
+#   python -m ppo.train_ppo task=flip steps=300000 env.reward.smooth=0.3
+# The env settings (env.*) come from env.yaml for the chosen task, including env.policy_dt.
+
+task: hover               # hover | flip
+seed: 0                   # eval: seed of the episode's starting state
+eval: false               # true: roll out the saved model and plot it instead of training
+
+steps: 1000000            # env steps to train for
+n_envs: 8                 # parallel environments
+n_steps: 1024             # rollout length per env between updates
+batch_size: 2048
+gamma: 0.99               # discount per control step
+learning_rate: 3e-4
+ent_coef: 0.0             # entropy bonus
+net_arch: [128, 128]      # hidden layers of the policy and value networks
+
+# Per-task overrides of the settings above
+flip:
+  ent_coef: 0.005         # a little entropy keeps it exploring rolls

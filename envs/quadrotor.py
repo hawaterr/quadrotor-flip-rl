@@ -37,20 +37,16 @@ def quat_to_rot(q):
 
 
 class Quadrotor:
-    def __init__(self, mass=0.8, inertia=(0.005, 0.005, 0.009),
-                 max_thrust_acc=4.0 * G,      # max collective thrust / mass  (thrust-to-weight 4)
-                 max_rate=15.0,               # max commanded body rate [rad/s]
-                 rate_kp=(40.0, 40.0, 20.0),  # rate controller gains [1/s]
-                 thrust_tau=0.03,             # thrust time constant [s]
-                 dt=0.002):
-        self.m = mass
-        self.I = np.diag(inertia)
+    def __init__(self, cfg):
+        """cfg: the `dynamics` section of configs/env.yaml."""
+        self.m = cfg.mass
+        self.I = np.diag(cfg.inertia)
         self.I_inv = np.linalg.inv(self.I)
-        self.max_thrust_acc = max_thrust_acc
-        self.max_rate = max_rate
-        self.kp = np.array(rate_kp)
-        self.thrust_tau = thrust_tau
-        self.dt = dt
+        self.max_thrust_acc = cfg.thrust_to_weight * G  # max collective thrust / mass
+        self.max_rate = cfg.max_rate
+        self.kp = np.array(cfg.rate_kp)
+        self.thrust_tau = cfg.thrust_tau
+        self.dt = cfg.sim_dt
         self.reset()
 
     def reset(self, p=None, v=None, q=None, w=None):
@@ -99,7 +95,8 @@ class Quadrotor:
 
 if __name__ == "__main__":
     # Sanity checks
-    quad = Quadrotor()
+    from configs import load_env
+    quad = Quadrotor(load_env("hover").dynamics)
 
     quad.reset(p=[0, 0, 10])
     quad.thrust_acc = 0.0

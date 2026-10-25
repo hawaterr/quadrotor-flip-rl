@@ -17,6 +17,7 @@ tdmpc2/
   agent.py              minimal single-task TD-MPC2 (world model, MPPI planner, ~1M params), CPU friendly
   train_tdmpc2.py       train and evaluate TD-MPC2 (--task pendulum for a quick sanity check)
 visualize.py            animate a rollout of any policy
+configs/                every tunable number: env.yaml, ppo.yaml, tdmpc2.yaml (see Configuration)
 models/  plots/  runs/  outputs: trained models, eval plots, TensorBoard logs (not tracked by git)
 ```
 
@@ -37,29 +38,35 @@ pip install -r requirements.txt
 python -c "import gymnasium, stable_baselines3, torch, matplotlib; print('ok', torch.__version__)"
 ```
 
+## Configuration
+
+All settings live in YAML files in `configs/`, not in the code. Each script loads them with one function (`configs.load_config`) into a single config, and any value can be overridden on the command line as `key=value`, the same style as the official TD-MPC2 (Hydra):
+
+Every model is saved with the full config it was trained with (`models/ppo_<task>.yaml`, inside `models/tdmpc2_<task>.pt`), so evaluation and `visualize.py` rebuild the same environment even after you edit the YAML.
+
 ## Usage
 
 ```bash
-# train (default 1M steps); saves models/ppo_<task>.zip. --task is hover (default) or flip
-python -m ppo.train_ppo --steps 300000
-python -m ppo.train_ppo --task flip
+# PPO: train (steps from configs/ppo.yaml); saves models/ppo_<task>.zip. task is hover (default) or flip
+python -m ppo.train_ppo steps=300000
+python -m ppo.train_ppo task=flip
+python -m ppo.train_ppo task=flip env.reward.smooth=0.3     # an experiment: any config value can be overridden
 
 # watch training curves
 tensorboard --logdir runs
 
-# roll out the saved policy and plot it to plots/<task>_eval.png (--seed picks the start)
-python -m ppo.train_ppo --eval
-python -m ppo.train_ppo --task flip --eval
+# roll out the saved policy and plot it to plots/<task>_eval.png (seed picks the start)
+python -m ppo.train_ppo eval=true
+python -m ppo.train_ppo task=flip eval=true seed=2
 
 # TD-MPC2: sanity check on Pendulum-v1 first, then hover / flip; saves models/tdmpc2_<task>.pt
-# It acts every 0.02 s (--ctrl-dt) so its 3-step plan sees further ahead. On CPU it is slow per step,
-# so --samples/--iterations shrink MPPI and --plan-after N acts with the policy prior (fast) until step N.
-python -m tdmpc2.train_tdmpc2 --task pendulum --steps 15000 --samples 256 --iterations 4
-python -m tdmpc2.train_tdmpc2 --task flip --samples 256 --iterations 4
-python -m tdmpc2.train_tdmpc2 --task flip --eval   # add --no-plan to roll out the policy prior alone
+# Control period, MPPI size and the rest are in configs/tdmpc2.yaml (about 10 steps/s on a laptop CPU).
+python -m tdmpc2.train_tdmpc2 task=pendulum
+python -m tdmpc2.train_tdmpc2 task=flip
+python -m tdmpc2.train_tdmpc2 task=flip eval=true             # plan=false: the policy prior alone, without MPPI
 
-# animate a rollout: --policy is one of zero, hover, random, scripted_hover, scripted_flip, ppo_hover, ppo_flip, tdmpc2_hover, tdmpc2_flip
-# (scripted_* are hand-written controllers, a baseline to compare PPO against; ppo_<task> / tdmpc2_<task> load from models/; add --no-plan for tdmpc2 without MPPI)
-python visualize.py --policy ppo_hover
-python visualize.py --policy ppo_flip --save plots/flip.gif
+# animate a rollout: policy is one of zero, hover, random, scripted_hover, scripted_flip, ppo_hover, ppo_flip, tdmpc2_hover, tdmpc2_flip
+# (scripted_* are hand-written controllers, a baseline; ppo_<task> / tdmpc2_<task> load from models/; plan=false for tdmpc2 without MPPI)
+python visualize.py policy=ppo_hover
+python visualize.py policy=ppo_flip save=plots/flip.gif
 ```

@@ -4,3 +4,4 @@ stable-baselines3
 torch
 matplotlib
 tensorboard
+omegaconf

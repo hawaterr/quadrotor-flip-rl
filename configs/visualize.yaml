@@ -1,0 +1,15 @@
+# visualize.py. Override on the command line, e.g.
+#   python visualize.py policy=tdmpc2_flip plan=false save=plots/flip.gif
+
+policy: scripted_hover    # zero, hover, random, scripted_<task>, ppo_<task>, tdmpc2_<task>  (task: hover | flip)
+seed: 0                   # seed of the episode's starting state
+save: null                # e.g. plots/hover.gif to also save the animation
+plan: true                # tdmpc2_*: false acts with the policy prior alone, without MPPI
+
+# Hand-written baseline controllers (scripted_hover / scripted_flip)
+scripted:
+  pd_kp: 4.0              # 1/s^2, position gain of the cascaded PD controller
+  pd_kd: 3.0              # 1/s, velocity gain
+  att_gain: 8.0           # 1/s, body rate per unit of attitude error
+  flip_climb_time: 0.25   # s at full thrust before rolling
+  flip_thrust: -0.2       # action thrust while rolling (slightly below hover)

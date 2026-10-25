@@ -1,0 +1,70 @@
+# TD-MPC2. Override anything on the command line, e.g.
+#   python -m tdmpc2.train_tdmpc2 task=flip steps=60000 agent.num_samples=512
+#   python -m tdmpc2.train_tdmpc2 task=flip eval=true plan=false seed=2
+# The env settings (env.*) come from env.yaml for the chosen task.
+
+task: hover               # hover | flip | pendulum (Pendulum-v1, a quick sanity check)
+seed: 0                   # eval: seed of the episode's starting state
+eval: false               # true: roll out the saved agent and plot it instead of training
+plan: true                # eval: false acts with the policy prior alone, without MPPI
+
+steps: 100000             # env steps to train for
+threads: 4                # torch CPU threads
+plan_after: 0             # act with the policy prior (fast) until this step, then with MPPI
+min_seed_steps: 1000      # random-action steps before learning starts: max(min_seed_steps,
+seed_episodes: 5          #   seed_episodes * episode length)
+log_every_episodes: 10    # console progress line
+log_every_steps: 1000     # TensorBoard losses
+
+agent:
+  # model
+  latent_dim: 128
+  mlp_dim: 256
+  enc_dim: 256
+  num_q: 5                # Q-function ensemble size
+  simnorm_dim: 8          # SimNorm group size
+  num_bins: 101           # two-hot bins for reward and value
+  vmin: -10.0             # two-hot support, in symlog space
+  vmax: 10.0
+  dropout: 0.0            # paper: 0.01 in Q; dropout's RNG costs ~25% of update time on CPU
+  # training
+  horizon: 3              # steps the latent dynamics are unrolled for, in training and planning
+  batch_size: 256
+  lr: 3e-4
+  enc_lr_scale: 0.3
+  grad_clip: 20.0
+  rho: 0.5                # temporal weight decay over the horizon
+  tau: 0.01               # target Q polyak rate
+  discount: 0.99          # per control step
+  consistency_coef: 20.0
+  reward_coef: 0.1
+  value_coef: 0.1
+  termination_coef: 1.0
+  entropy_coef: 1e-4
+  log_std_min: -10.0
+  log_std_max: 2.0
+  # planning (MPPI). Halved from the paper's 512 x 6 to keep CPU training to about 10 steps/s
+  iterations: 4
+  num_samples: 256
+  num_elites: 64
+  num_pi_trajs: 24        # of num_samples, trajectories proposed by the policy prior
+  temperature: 0.5
+  min_std: 0.05
+  max_std: 2.0
+
+# Per-task overrides of the settings above
+pendulum:
+  steps: 15000
+
+hover:
+  env:
+    policy_dt: 0.02       # s; a 3-step plan at env.yaml's 0.01 s only sees 30 ms ahead
+  agent:
+    discount: 0.9801      # 0.99 per 10 ms, as PPO
+
+flip:
+  steps: 60000            # the last run stopped improving after ~35k steps
+  env:
+    policy_dt: 0.02       # s; a flip takes ~0.6 s, a 3-step plan at 0.01 s only sees 30 ms ahead
+  agent:
+    discount: 0.9801      # 0.99 per 10 ms, as PPO

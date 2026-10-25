@@ -6,50 +6,13 @@ and MPPI planning in latent space. Dropped: everything multi-task (task embeddin
 Added: a termination head, since QuadEnv ends episodes on a crash (the original assumes fixed-length episodes).
 """
 import os
-from dataclasses import asdict, dataclass
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-
-@dataclass
-class Config:
-    # model
-    latent_dim: int = 128
-    mlp_dim: int = 256
-    enc_dim: int = 256
-    num_q: int = 5
-    simnorm_dim: int = 8
-    num_bins: int = 101
-    vmin: float = -10.0  # two-hot support, in symlog space
-    vmax: float = 10.0
-    dropout: float = 0.0  # paper: 0.01 in Q; dropout's RNG costs ~25% of update time on CPU
-    # training
-    horizon: int = 3
-    batch_size: int = 256
-    lr: float = 3e-4
-    enc_lr_scale: float = 0.3
-    grad_clip: float = 20.0
-    rho: float = 0.5  # temporal weight decay over the horizon
-    tau: float = 0.01  # target Q polyak rate
-    discount: float = 0.99
-    consistency_coef: float = 20.0
-    reward_coef: float = 0.1
-    value_coef: float = 0.1
-    termination_coef: float = 1.0
-    entropy_coef: float = 1e-4
-    log_std_min: float = -10.0
-    log_std_max: float = 2.0
-    # planning (MPPI)
-    iterations: int = 6
-    num_samples: int = 512
-    num_elites: int = 64
-    num_pi_trajs: int = 24
-    temperature: float = 0.5
-    min_std: float = 0.05
-    max_std: float = 2.0
+from configs import Config
 
 
 # --- math helpers ----------------------------------------------------------------------------------
@@ -183,8 +146,9 @@ class WorldModel(nn.Module):
 # --- agent -----------------------------------------------------------------------------------------
 
 class TDMPC2:
-    def __init__(self, obs_dim, act_dim, cfg=None):
-        self.cfg = cfg or Config()
+    def __init__(self, obs_dim, act_dim, cfg):
+        """cfg: the `agent` section of configs/tdmpc2.yaml."""
+        self.cfg = cfg
         self.obs_dim, self.act_dim = obs_dim, act_dim
         self.model = WorldModel(obs_dim, act_dim, self.cfg)
         self.two_hot = TwoHot(self.cfg)
@@ -321,14 +285,14 @@ class TDMPC2:
 
     def save(self, path, **meta):
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-        torch.save({"model": self.model.state_dict(), "cfg": asdict(self.cfg), "obs_dim": self.obs_dim,
+        torch.save({"model": self.model.state_dict(), "cfg": self.cfg.to_dict(), "obs_dim": self.obs_dim,
                     "act_dim": self.act_dim, "scale": self.scale.value, **meta}, path)
 
     @classmethod
     def load(cls, path):
         """Returns (agent, checkpoint dict); the dict also holds whatever meta was passed to save()."""
         ckpt = torch.load(path, weights_only=False)
-        agent = cls(ckpt["obs_dim"], ckpt["act_dim"], Config(**ckpt["cfg"]))
+        agent = cls(ckpt["obs_dim"], ckpt["act_dim"], Config(ckpt["cfg"]))
         agent.model.load_state_dict(ckpt["model"])
         agent.scale.value = ckpt["scale"]
         return agent, ckpt

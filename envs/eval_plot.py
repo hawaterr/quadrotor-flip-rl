@@ -16,7 +16,7 @@ def evaluate_and_plot(env, act, out_png, seed=0):
         obs, _, term, trunc, info = env.step(action)
         done = term or trunc
         q = env.quad
-        log["t"].append(env.t * env.ctrl_dt)
+        log["t"].append(env.t * env.policy_dt)
         log["pos_err"].append(q.p - env.target)
         log["dist"].append(info["dist"])
         log["upright"].append(q.R[2, 2])

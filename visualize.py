@@ -1,25 +1,26 @@
 """Quick 3D visualisation of QuadEnv.
 
 The policy name also picks the task: <name>_flip runs the flip env, everything else the hover env.
+Settings: configs/visualize.yaml; override any of them as key=value.
 
     python visualize.py                           # hand-coded hover controller (tests env + physics, no RL)
-    python visualize.py --policy scripted_flip    # hand-coded flip
-    python visualize.py --policy zero             # thrust off: should fall
-    python visualize.py --policy hover            # constant hover thrust, no feedback: drifts from the perturbed start
-    python visualize.py --policy random
-    python visualize.py --policy ppo_hover        # trained model from ppo/train_ppo.py (models/ppo_hover.zip)
-    python visualize.py --policy ppo_flip         # trained model from ppo/train_ppo.py --task flip (models/ppo_flip.zip)
-    python visualize.py --policy tdmpc2_flip      # trained agent from tdmpc2/train_tdmpc2.py --task flip (models/tdmpc2_flip.pt), with MPPI
-    python visualize.py --policy tdmpc2_flip --no-plan   # same agent, policy prior only (no MPPI)
-    python visualize.py --save plots/hover.gif    # also save the animation
+    python visualize.py policy=scripted_flip      # hand-coded flip
+    python visualize.py policy=zero               # thrust off: should fall
+    python visualize.py policy=hover              # constant hover thrust, no feedback: drifts from the perturbed start
+    python visualize.py policy=random
+    python visualize.py policy=ppo_hover          # trained model from ppo/train_ppo.py (models/ppo_hover.zip)
+    python visualize.py policy=ppo_flip           # trained model from ppo/train_ppo.py task=flip (models/ppo_flip.zip)
+    python visualize.py policy=tdmpc2_flip        # trained agent from tdmpc2/train_tdmpc2.py task=flip, with MPPI
+    python visualize.py policy=tdmpc2_flip plan=false    # same agent, policy prior only (no MPPI)
+    python visualize.py save=plots/hover.gif      # also save the animation
 """
-import argparse
 import os
 
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.animation import FuncAnimation
 
+from configs import env_from_checkpoint, load_config
 from envs.quad_env import TASKS, QuadEnv
 from envs.quadrotor import G
 
@@ -33,7 +34,8 @@ def task_of(policy):
     return suffix if suffix in TASKS else "hover"
 
 
-def make_policy(name, env, plan=True):
+def make_policy(name, env, plan=True, scripted=None):
+    """scripted: the `scripted` section of configs/visualize.yaml (gains of the hand-written controllers)."""
     if name == "zero":
         return lambda obs, t: np.array([-1.0, 0, 0, 0])          # thrust off
     if name == "hover":
@@ -53,9 +55,9 @@ def make_policy(name, env, plan=True):
     # desired thrust direction; body rates rotate body z towards it.
     def pd(obs, t):
         q = env.quad
-        a_des = -4.0 * (q.p - env.target) - 3.0 * q.v + np.array([0, 0, G])
+        a_des = -scripted.pd_kp * (q.p - env.target) - scripted.pd_kd * q.v + np.array([0, 0, G])
         z_des = a_des / np.linalg.norm(a_des)
-        rates = 8.0 * np.cross([0, 0, 1], q.R.T @ z_des)
+        rates = scripted.att_gain * np.cross([0, 0, 1], q.R.T @ z_des)
         thrust = a_des @ q.R[:, 2]
         a0 = (thrust - G) / (q.max_thrust_acc - G) if thrust >= G else thrust / G - 1.0
         return np.clip(np.array([a0, *(rates / q.max_rate)]), -1, 1)
@@ -63,18 +65,20 @@ def make_policy(name, env, plan=True):
         return pd
 
     # scripted_flip: climb, roll until one revolution, then recover with the PD controller
+    climb_steps = round(scripted.flip_climb_time / env.policy_dt)
+
     def flip(obs, t):
-        if t < 25:
+        if t < climb_steps:
             return np.array([1.0, 0, 0, 0])
         if not env.flip_done:
-            return np.array([-0.2, 1.0, 0, 0])
+            return np.array([scripted.flip_thrust, 1.0, 0, 0])
         return pd(obs, t)
     return flip
 
 
 def rollout(env, policy, seed):
     """Log the state at t = 0 (after reset) and after every step. Commands are logged per step and held over
-    the step that follows, so index i of every series is time i * ctrl_dt."""
+    the step that follows, so index i of every series is time i * policy_dt."""
     obs, _ = env.reset(seed=seed, options={"exact": True})
     log = {"p": [], "R": [], "r": [], "dist": [], "revs": [], "done": [], "thrust": [],
            "thrust_cmd": [], "rate_cmd": [], "w": [], "mass": env.quad.m, "task": env.task}
@@ -114,7 +118,7 @@ def rollout(env, policy, seed):
     return log
 
 
-def animate(log, ctrl_dt, save=None):
+def animate(log, policy_dt, save=None):
     P = np.array(log["p"])
     # Arm tips in body frame (X configuration) and the body "up" axis
     arms = ARM * np.array([[1, 1, 0], [-1, -1, 0], [1, -1, 0], [-1, 1, 0]]) / np.sqrt(2)
@@ -139,7 +143,7 @@ def animate(log, ctrl_dt, save=None):
 
     # Under the 3D view, drawn up to the current time. Left column: commands (dashed) vs actual (solid) for
     # thrust and the body rates. Right column: height and the attitude angles. All share one time axis.
-    T = np.arange(len(P)) * ctrl_dt
+    T = np.arange(len(P)) * policy_dt
     series = {"thrust_cmd": np.array(log["thrust_cmd"]), "thrust": np.array(log["thrust"]),
               "rate_cmd": np.array(log["rate_cmd"]), "w": np.array(log["w"])}
     # ZYX Euler angles, unwrapped so a flip reads as a smooth 0 -> 360 deg instead of jumping at +-180
@@ -191,7 +195,7 @@ def animate(log, ctrl_dt, save=None):
 
         trail.set_data_3d(*P[: i + 1].T)
         flip = f"  revs={log['revs'][i]:.2f}  flip_done={log['done'][i]}" if log["task"] == "flip" else ""
-        text.set_text(f"t={i * ctrl_dt:.2f}s  dist to target={log['dist'][i]:.2f} m{flip}\n"
+        text.set_text(f"t={i * policy_dt:.2f}s  dist to target={log['dist'][i]:.2f} m{flip}\n"
                       f"thrust={F:.1f} N ({F / hover_force:.2f}x hover)  reward={log['r'][i]:.1f}")
         for line, key, col in lines:
             y = series[key][: i + 1]
@@ -199,7 +203,7 @@ def animate(log, ctrl_dt, save=None):
         # Everything that changes, so blitting redraws only these instead of the whole figure
         return arm1, arm2, front, trail, text, arrow, *(line for line, _, _ in lines)
 
-    frames = range(0, len(P), max(1, round(0.02 / ctrl_dt)))  # ~real time at 20 ms/frame
+    frames = range(0, len(P), max(1, round(0.02 / policy_dt)))  # ~real time at 20 ms/frame
     anim = FuncAnimation(fig, update, frames=frames, interval=20, blit=True)
     if save:
         os.makedirs(os.path.dirname(save) or ".", exist_ok=True)
@@ -209,18 +213,18 @@ def animate(log, ctrl_dt, save=None):
 
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--policy", default="scripted_hover", choices=POLICIES)
-    ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--save", default=None, help="e.g. plots/hover.gif")
-    ap.add_argument("--no-plan", action="store_true", help="tdmpc2_*: act with the policy prior instead of MPPI")
-    args = ap.parse_args()
+    cfg = load_config("visualize")
+    if cfg.policy not in POLICIES:
+        raise ValueError(f"policy must be one of {POLICIES}, got {cfg.policy!r}")
 
-    ctrl_dt, smooth_coef = 0.01, None
-    if args.policy.startswith("tdmpc2_"):
+    # Trained policies run in the env they were trained in (saved with the model); the rest use configs/env.yaml
+    task, env_cfg = task_of(cfg.policy), None
+    if cfg.policy.startswith("tdmpc2_"):
         import torch
-        ckpt = torch.load(f"models/{args.policy}.pt", weights_only=False)
-        ctrl_dt, smooth_coef = ckpt["ctrl_dt"], ckpt.get("smooth_coef")  # the env it was trained in
-    env = QuadEnv(task=task_of(args.policy), ctrl_dt=ctrl_dt, smooth_coef=smooth_coef)
-    log = rollout(env, make_policy(args.policy, env, plan=not args.no_plan), args.seed)
-    animate(log, env.ctrl_dt, args.save)
+        env_cfg = env_from_checkpoint(torch.load(f"models/{cfg.policy}.pt", weights_only=False), task)
+    elif cfg.policy.startswith("ppo_"):
+        from ppo.train_ppo import saved_env_config
+        env_cfg = saved_env_config(task)
+    env = QuadEnv(task=task, cfg=env_cfg)
+    log = rollout(env, make_policy(cfg.policy, env, plan=cfg.plan, scripted=cfg.scripted), cfg.seed)
+    animate(log, env.policy_dt, cfg.save)

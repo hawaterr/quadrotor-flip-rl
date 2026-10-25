@@ -6,44 +6,40 @@
 Action (4, in [-1, 1]): collective thrust, roll rate, pitch rate, yaw rate  -> scaled to CTBR.
     Thrust is centred on hover: a[0] = 0 -> thrust = g, so a zero-mean initial policy roughly hovers.
 Observation: ground-truth state for now. Later, swap in your IMU-based estimate.
+
+All settings (dynamics, episode length, limits, start noise, curriculum, reward weights) come from
+configs/env.yaml (configs.load_env).
 """
 import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 
+from configs import ENV_TASKS as TASKS  # noqa: F401  (re-exported for the scripts)
+from configs import load_env
 from envs.quadrotor import G, Quadrotor
 
-TASKS = ("hover", "flip")
-# Per-task defaults, used when the matching constructor argument is None
-EPISODE_TIME = {"hover": 5.0, "flip": 2.0}
-INIT_NOISE = {"hover": 1.0, "flip": 0.0}
-MAX_DIST = {"hover": 3.0, "flip": 6.0}  # a flip needs room to climb first
-# Weight of the ||action - previous action||^2 penalty. The flip needs it stronger: the rate controller filters
-# out step-to-step chattering, so with a weak penalty the agent learns to chatter almost for free.
-SMOOTH_COEF = {"hover": 0.01, "flip": 0.1}
+# Observation scaling, to keep inputs roughly in [-1, 1]. Fixed, not a config setting: trained models
+# depend on it, so changing it would silently break them.
+W_SCALE = 10.0    # rad/s
+V_SCALE = 5.0     # m/s
+POS_SCALE = 2.0   # m
 
 
 class QuadEnv(gym.Env):
     metadata = {"render_modes": []}
 
-    def __init__(self, task="hover", ctrl_dt=0.01, episode_time=None, target=(0.0, 0.0, 3.0),
-                 min_height=0.5, max_dist=None, init_noise=None, mid_flip_prob=0.0, smooth_coef=None):
-        if task not in TASKS:
-            raise ValueError(f"task must be one of {TASKS}, got {task!r}")
-        self.task = task
-        self.quad = Quadrotor()
-        self.substeps = int(round(ctrl_dt / self.quad.dt))
-        self.ctrl_dt = ctrl_dt
-        self.max_steps = int((episode_time or EPISODE_TIME[task]) / ctrl_dt)
-        self.target = np.array(target, float)
-        self.min_height = min_height
-        self.max_dist = MAX_DIST[task] if max_dist is None else max_dist
-        # scales the initial perturbation (0 = start exactly at hover, plus tiny v/w noise)
-        self.init_noise = INIT_NOISE[task] if init_noise is None else init_noise
-        # flip only: fraction of episodes that start part-way through a roll (training curriculum,
-        # so the agent sees "finish the flip and recover" without first discovering a full roll)
-        self.mid_flip_prob = mid_flip_prob
-        self.smooth_coef = SMOOTH_COEF[task] if smooth_coef is None else smooth_coef
+    def __init__(self, task="hover", cfg=None, training=False, policy_dt=None):
+        """cfg: the env config (cfg.env of a loaded config); by default configs/env.yaml for `task`
+        (policy_dt overrides the file's).
+        training=True turns on the flip's mid-roll starts (curriculum); evaluation always starts from rest."""
+        self.cfg = cfg if cfg is not None else load_env(task, policy_dt=policy_dt)
+        self.task = self.cfg.task
+        self.training = training
+        self.quad = Quadrotor(self.cfg.dynamics)
+        self.policy_dt = self.cfg.policy_dt
+        self.substeps = int(round(self.policy_dt / self.quad.dt))
+        self.max_steps = int(self.cfg.episode_time / self.policy_dt)
+        self.target = np.array(self.cfg.target, float)
 
         self.action_space = spaces.Box(-1.0, 1.0, shape=(4,), dtype=np.float32)
         # rot matrix (9) + body rates (3) + velocity (3) + position error (3) + previous action (4)
@@ -64,9 +60,9 @@ class QuadEnv(gym.Env):
         q = self.quad
         parts = [
             q.R.flatten(),
-            q.w / 10.0,
-            q.v / 5.0,
-            (q.p - self.target) / 2.0,
+            q.w / W_SCALE,
+            q.v / V_SCALE,
+            (q.p - self.target) / POS_SCALE,
             self.prev_action,
         ]
         if self.task == "flip":
@@ -76,20 +72,21 @@ class QuadEnv(gym.Env):
         return np.concatenate(parts).astype(np.float32)
 
     def reset(self, seed=None, options=None):
-        """options={"exact": True} (used for evaluation): with init_noise=0, start exactly at rest."""
+        """options={"exact": True} (used for evaluation): drop the minimum v/w spread, so a start with zero
+        noise (the flip's) is exactly at rest."""
         super().reset(seed=seed)
         rng = self.np_random
-        s = self.init_noise
+        start = self.cfg.start
 
-        # Spread of the random start; every term scales with init_noise. During training, velocity and
-        # body rates also get a minimum spread, so even an init_noise=0 start differs a little each episode.
-        # "exact" removes that minimum. A spread of 0 means rng.normal returns exactly its mean, 0.
+        # Spread of the random start (configs/env.yaml, `start`). During training, velocity and body rates
+        # get at least min_std, so even a zero-noise start differs a little each episode. "exact" removes
+        # that minimum. A spread of 0 means rng.normal returns exactly its mean, 0.
         exact = (options or {}).get("exact", False)
-        min_std = 0.0 if exact else 0.1
-        tilt_std = 0.2 * s
-        pos_range = 0.5 * s
-        v_std = max(0.3 * s, min_std)
-        w_std = max(0.5 * s, min_std)
+        min_std = 0.0 if exact else start.min_std
+        tilt_std = start.tilt_std
+        pos_range = start.pos_range
+        v_std = max(start.v_std, min_std)
+        w_std = max(start.w_std, min_std)
 
         # Random small tilt as an axis-angle -> quaternion
         axis_angle = rng.normal(0, tilt_std, 3)
@@ -104,12 +101,16 @@ class QuadEnv(gym.Env):
         )
         self.roll_progress = 0.0
         self.flip_done = False
-        if self.task == "flip" and rng.random() < self.mid_flip_prob:
+        # Flip training curriculum: some episodes start part-way through a roll, so the agent practises
+        # "finish the flip and recover" before it can do a whole flip
+        mid = self.cfg.mid_flip
+        prob = mid.prob if (self.training and mid is not None) else 0.0
+        if self.task == "flip" and rng.random() < prob:
             # Already rolling at a random angle, with some climb speed to carry it through
-            phi = rng.uniform(0, 0.9 * 2 * np.pi)
+            phi = rng.uniform(0, mid.max_angle_frac * 2 * np.pi)
             self.quad.q = np.array([np.cos(phi / 2), np.sin(phi / 2), 0.0, 0.0])
-            self.quad.w = np.array([10.0, 0, 0]) + rng.normal(0, 0.5, 3)
-            self.quad.v = np.array([0, 0, 2.0]) + rng.normal(0, 0.3, 3)
+            self.quad.w = np.array([mid.roll_rate, 0, 0]) + rng.normal(0, mid.rate_std, 3)
+            self.quad.v = np.array([0, 0, mid.climb_speed]) + rng.normal(0, mid.climb_std, 3)
             self.roll_progress = phi
         self.best_progress = np.clip(self.roll_progress, 0, 2 * np.pi)
         self.prev_action = np.zeros(4)
@@ -133,44 +134,45 @@ class QuadEnv(gym.Env):
         self.prev_action = action
 
         if terminated:
-            reward -= 10.0
+            reward -= self.cfg.reward.crash
         truncated = self.t >= self.max_steps
         return self._obs(), float(reward), terminated, truncated, {
             "dist": dist, "flip_done": self.flip_done, "roll_progress": self.roll_progress}
 
+    def _terminated(self, dist):
+        return bool(self.quad.p[2] < self.cfg.min_height or dist > self.cfg.max_dist)
+
     def _hover_reward(self, action, dist):
-        q = self.quad
+        q, r = self.quad, self.cfg.reward
         upright = q.R[2, 2]  # 1 = level, -1 = upside down
         # Positive "alive" reward that is largest at the target, so surviving is always worth it
-        reward = 1.0 - 0.5 * dist
-        reward += 0.2 * upright
-        reward -= 0.05 * np.linalg.norm(q.w)
-        reward -= 0.05 * np.linalg.norm(q.v)
-        reward -= self.smooth_coef * np.sum((action - self.prev_action) ** 2)
-        terminated = bool(q.p[2] < self.min_height or dist > self.max_dist)
-        return reward, terminated
+        reward = r.alive - r.dist * dist
+        reward += r.upright * upright
+        reward -= r.body_rate * np.linalg.norm(q.w)
+        reward -= r.speed * np.linalg.norm(q.v)
+        reward -= r.smooth * np.sum((action - self.prev_action) ** 2)
+        return reward, self._terminated(dist)
 
     def _flip_reward(self, action, dist):
-        q = self.quad
+        q, r = self.quad, self.cfg.reward
         upright = q.R[2, 2]
         reward = 0.0
         if not self.flip_done:
             # Reward new roll progress only, so rolling back and forth can't be farmed
             progress = np.clip(self.roll_progress, 0, 2 * np.pi)
-            reward += 3.0 * max(0.0, progress - self.best_progress)
+            reward += r.roll_progress * max(0.0, progress - self.best_progress)
             self.best_progress = max(self.best_progress, progress)
-            if self.roll_progress >= 2 * np.pi * 0.95:
+            if self.roll_progress >= 2 * np.pi * r.done_frac:
                 self.flip_done = True
-                reward += 10.0  # completion bonus
+                reward += r.completion_bonus
         else:
             # Recovery: be level, stop rotating, stop falling
-            reward += 0.5 * upright
-            reward -= 0.05 * np.linalg.norm(q.w)
-            reward -= 0.05 * abs(q.v[2])
+            reward += r.upright * upright
+            reward -= r.body_rate * np.linalg.norm(q.w)
+            reward -= r.vertical_speed * abs(q.v[2])
 
         # Stay near the start point (climbing away is not free), keep actions smooth.
-        # The first 3 m are free: a flip needs to climb first and ends up above the start.
-        reward -= 0.5 * max(0.0, dist - 3.0)
-        reward -= self.smooth_coef * np.sum((action - self.prev_action) ** 2)
-        terminated = bool(q.p[2] < self.min_height or dist > self.max_dist)
-        return reward, terminated
+        # The first free_dist metres are free: a flip needs to climb first and ends up above the start.
+        reward -= r.dist * max(0.0, dist - r.free_dist)
+        reward -= r.smooth * np.sum((action - self.prev_action) ** 2)
+        return reward, self._terminated(dist)

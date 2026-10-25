@@ -1,47 +1,56 @@
 """Train PPO on QuadEnv, or evaluate and plot a trained policy.
 
+Settings: configs/ppo.yaml (+ configs/env.yaml as env.*); override any of them as key=value.
 Run from the repo root:
-    python -m ppo.train_ppo                         # train hover; saves models/ppo_hover.zip
-    python -m ppo.train_ppo --task flip             # train flip; saves models/ppo_flip.zip
-    python -m ppo.train_ppo --task flip --eval      # roll out saved policy and plot to plots/flip_eval.png
+    python -m ppo.train_ppo                          # train hover; saves models/ppo_hover.zip (+ .yaml)
+    python -m ppo.train_ppo task=flip steps=300000   # train flip; saves models/ppo_flip.zip (+ .yaml)
+    python -m ppo.train_ppo task=flip eval=true      # roll out saved policy and plot to plots/flip_eval.png
 """
-import argparse
+import os
 
+from omegaconf import OmegaConf
 from stable_baselines3 import PPO
 from stable_baselines3.common.env_util import make_vec_env
 
+from configs import ENV_TASKS, Config, load_config, load_env
 from envs.eval_plot import evaluate_and_plot
-from envs.quad_env import TASKS, QuadEnv
+from envs.quad_env import QuadEnv
 
 
-def train(task, steps):
-    flip = task == "flip"
-    # Flip: half the episodes start mid-roll, and a little entropy keeps it exploring rolls
-    env = make_vec_env(QuadEnv, n_envs=8, env_kwargs=dict(task=task, mid_flip_prob=0.5 if flip else 0.0))
-    model = PPO("MlpPolicy", env, n_steps=1024, batch_size=2048, gamma=0.99,
-                learning_rate=3e-4, ent_coef=0.005 if flip else 0.0, verbose=1,
-                policy_kwargs=dict(net_arch=[128, 128]), tensorboard_log="runs")
+def saved_env_config(task):
+    """The env config saved next to models/ppo_<task>.zip; env.yaml for models saved before configs existed."""
+    path = f"models/ppo_{task}.yaml"
+    if not os.path.exists(path):
+        return load_env(task)
+    return Config(OmegaConf.to_container(OmegaConf.load(path)).get("env"))
+
+
+def train(cfg):
+    env = make_vec_env(QuadEnv, n_envs=cfg.n_envs, env_kwargs=dict(cfg=cfg.env, training=True))
+    model = PPO("MlpPolicy", env, n_steps=cfg.n_steps, batch_size=cfg.batch_size, gamma=cfg.gamma,
+                learning_rate=cfg.learning_rate, ent_coef=cfg.ent_coef, verbose=1,
+                policy_kwargs=dict(net_arch=cfg.net_arch), tensorboard_log="runs")
     try:
-        model.learn(total_timesteps=steps)
+        model.learn(total_timesteps=cfg.steps)
     except KeyboardInterrupt:
         print(f"\ninterrupted at {model.num_timesteps} steps, saving what we have")
     finally:
         env.close()
-    model.save(f"models/ppo_{task}")  # SB3 creates the folder and adds .zip
-    print(f"saved models/ppo_{task}.zip")
+    model.save(f"models/ppo_{cfg.task}")  # SB3 creates the folder and adds .zip
+    # Save the config next to the model, so evaluation rebuilds the env it was trained in
+    OmegaConf.save(cfg.to_dict(), f"models/ppo_{cfg.task}.yaml")
+    print(f"saved models/ppo_{cfg.task}.zip and models/ppo_{cfg.task}.yaml")
 
 
-def evaluate(task, seed=0):
-    model = PPO.load(f"models/ppo_{task}")
-    evaluate_and_plot(QuadEnv(task=task), lambda obs, t: model.predict(obs, deterministic=True)[0],
-                      f"plots/{task}_eval.png", seed=seed)
+def evaluate(cfg):
+    model = PPO.load(f"models/ppo_{cfg.task}")
+    evaluate_and_plot(QuadEnv(cfg=saved_env_config(cfg.task)),
+                      lambda obs, t: model.predict(obs, deterministic=True)[0],
+                      f"plots/{cfg.task}_eval.png", seed=cfg.seed)
 
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--task", default="hover", choices=TASKS)
-    ap.add_argument("--eval", action="store_true")
-    ap.add_argument("--seed", type=int, default=0, help="eval: seed of the episode's starting state")
-    ap.add_argument("--steps", type=int, default=1_000_000)
-    args = ap.parse_args()
-    evaluate(args.task, args.seed) if args.eval else train(args.task, args.steps)
+    cfg = load_config("ppo")
+    if cfg.task not in ENV_TASKS:
+        raise ValueError(f"PPO task must be one of {ENV_TASKS}, got {cfg.task!r}")
+    evaluate(cfg) if cfg.eval else train(cfg)
