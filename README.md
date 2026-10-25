@@ -16,7 +16,7 @@ ppo/
 tdmpc2/
   agent.py              minimal single-task TD-MPC2 (world model, MPPI planner, ~1M params), CPU friendly
   train_tdmpc2.py       train and evaluate TD-MPC2 (--task pendulum for a quick sanity check)
-visualize.py            animate a rollout of any policy
+animate_rollout.py      run one episode of any policy and animate it
 configs/                every tunable number: env.yaml, ppo.yaml, tdmpc2.yaml (see Configuration)
 models/  plots/  runs/  outputs: trained models, eval plots, TensorBoard logs (not tracked by git)
 ```
@@ -42,7 +42,7 @@ python -c "import gymnasium, stable_baselines3, torch, matplotlib; print('ok', t
 
 All settings live in YAML files in `configs/`, not in the code. Each script loads them with one function (`configs.load_config`) into a single config, and any value can be overridden on the command line as `key=value`, the same style as the official TD-MPC2 (Hydra):
 
-Every model is saved with the full config it was trained with (`models/ppo_<task>.yaml`, inside `models/tdmpc2_<task>.pt`), so evaluation and `visualize.py` rebuild the same environment even after you edit the YAML.
+Every model is saved with the full config it was trained with (`models/ppo_<task>.yaml`, inside `models/tdmpc2_<task>.pt`), so evaluation and `animate_rollout.py` rebuild the same environment even after you edit the YAML.
 
 ## Usage
 
@@ -67,6 +67,6 @@ python -m tdmpc2.train_tdmpc2 task=flip eval=true             # plan=false: the 
 
 # animate a rollout: policy is one of zero, hover, random, scripted_hover, scripted_flip, ppo_hover, ppo_flip, tdmpc2_hover, tdmpc2_flip
 # (scripted_* are hand-written controllers, a baseline; ppo_<task> / tdmpc2_<task> load from models/; plan=false for tdmpc2 without MPPI)
-python visualize.py policy=ppo_hover
-python visualize.py policy=ppo_flip save=plots/flip.gif
+python animate_rollout.py policy=ppo_hover
+python animate_rollout.py policy=ppo_flip save=plots/flip.gif
 ```

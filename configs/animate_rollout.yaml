@@ -1,5 +1,5 @@
-# visualize.py. Override on the command line, e.g.
-#   python visualize.py policy=tdmpc2_flip plan=false save=plots/flip.gif
+# animate_rollout.py. Override on the command line, e.g.
+#   python animate_rollout.py policy=tdmpc2_flip plan=false save=plots/flip.gif
 
 policy: scripted_hover    # zero, hover, random, scripted_<task>, ppo_<task>, tdmpc2_<task>  (task: hover | flip)
 seed: 0                   # seed of the episode's starting state

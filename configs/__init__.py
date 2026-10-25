@@ -1,9 +1,9 @@
 """Config files. Every tunable number lives in one of these:
 
-    env.yaml      simulator, tasks and reward weights (shared by both algorithms)
-    ppo.yaml      PPO settings
-    tdmpc2.yaml   TD-MPC2 settings
-    visualize.yaml  visualize.py settings and the scripted baseline controllers
+    env.yaml              simulator, tasks and reward weights (shared by both algorithms)
+    ppo.yaml              PPO settings
+    tdmpc2.yaml           TD-MPC2 settings
+    animate_rollout.yaml  animate_rollout.py settings and the scripted baseline controllers
 
 load_config() merges them into one config and applies command-line overrides, the same style as the
 official TD-MPC2 (Hydra):  python -m tdmpc2.train_tdmpc2 task=flip steps=60000 env.reward.smooth=0.3

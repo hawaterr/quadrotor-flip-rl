@@ -1,18 +1,18 @@
-"""Quick 3D visualisation of QuadEnv.
+"""Run one episode of any policy on QuadEnv and animate it: 3D view plus command and attitude plots.
 
 The policy name also picks the task: <name>_flip runs the flip env, everything else the hover env.
-Settings: configs/visualize.yaml; override any of them as key=value.
+Settings: configs/animate_rollout.yaml; override any of them as key=value.
 
-    python visualize.py                           # hand-coded hover controller (tests env + physics, no RL)
-    python visualize.py policy=scripted_flip      # hand-coded flip
-    python visualize.py policy=zero               # thrust off: should fall
-    python visualize.py policy=hover              # constant hover thrust, no feedback: drifts from the perturbed start
-    python visualize.py policy=random
-    python visualize.py policy=ppo_hover          # trained model from ppo/train_ppo.py (models/ppo_hover.zip)
-    python visualize.py policy=ppo_flip           # trained model from ppo/train_ppo.py task=flip (models/ppo_flip.zip)
-    python visualize.py policy=tdmpc2_flip        # trained agent from tdmpc2/train_tdmpc2.py task=flip, with MPPI
-    python visualize.py policy=tdmpc2_flip plan=false    # same agent, policy prior only (no MPPI)
-    python visualize.py save=plots/hover.gif      # also save the animation
+    python animate_rollout.py                           # hand-coded hover controller (tests env + physics, no RL)
+    python animate_rollout.py policy=scripted_flip      # hand-coded flip
+    python animate_rollout.py policy=zero               # thrust off: should fall
+    python animate_rollout.py policy=hover              # constant hover thrust, no feedback: drifts from the perturbed start
+    python animate_rollout.py policy=random
+    python animate_rollout.py policy=ppo_hover          # trained model from ppo/train_ppo.py (models/ppo_hover.zip)
+    python animate_rollout.py policy=ppo_flip           # trained model from ppo/train_ppo.py task=flip (models/ppo_flip.zip)
+    python animate_rollout.py policy=tdmpc2_flip        # trained agent from tdmpc2/train_tdmpc2.py task=flip, with MPPI
+    python animate_rollout.py policy=tdmpc2_flip plan=false    # same agent, policy prior only (no MPPI)
+    python animate_rollout.py save=plots/hover.gif      # also save the animation
 """
 import os
 
@@ -35,7 +35,7 @@ def task_of(policy):
 
 
 def make_policy(name, env, plan=True, scripted=None):
-    """scripted: the `scripted` section of configs/visualize.yaml (gains of the hand-written controllers)."""
+    """scripted: the `scripted` section of configs/animate_rollout.yaml (gains of the hand-written controllers)."""
     if name == "zero":
         return lambda obs, t: np.array([-1.0, 0, 0, 0])          # thrust off
     if name == "hover":
@@ -213,7 +213,7 @@ def animate(log, policy_dt, save=None):
 
 
 if __name__ == "__main__":
-    cfg = load_config("visualize")
+    cfg = load_config("animate_rollout")
     if cfg.policy not in POLICIES:
         raise ValueError(f"policy must be one of {POLICIES}, got {cfg.policy!r}")
 
