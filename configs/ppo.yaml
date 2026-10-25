@@ -7,6 +7,10 @@ seed: 0                   # eval: seed of the episode's starting state
 eval: false               # true: roll out the saved model and plot it instead of training
 
 steps: 1000000            # env steps to train for
+save_every: 100000        # env steps between checkpoints (models/ppo_<task>.zip), to check progress mid-run
+init_model: null          # a saved model to continue training from (fine-tuning), e.g. models/ppo_flip_v1.zip
+name: null                # model file name in models/ (default ppo_<task>); use another for experiments,
+                          #   so their checkpoints don't overwrite the main model
 n_envs: 8                 # parallel environments
 n_steps: 1024             # rollout length per env between updates
 batch_size: 2048

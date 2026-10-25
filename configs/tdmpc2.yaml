@@ -9,6 +9,7 @@ eval: false               # true: roll out the saved agent and plot it instead o
 plan: true                # eval: false acts with the policy prior alone, without MPPI
 
 steps: 100000             # env steps to train for
+save_every: 5000          # env steps between checkpoints (models/tdmpc2_<task>.pt), to check progress mid-run
 threads: 4                # torch CPU threads
 plan_after: 0             # act with the policy prior (fast) until this step, then with MPPI
 min_seed_steps: 1000      # random-action steps before learning starts: max(min_seed_steps,

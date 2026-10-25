@@ -21,6 +21,7 @@ import numpy as np
 from matplotlib.animation import FuncAnimation
 
 from configs import env_from_checkpoint, load_config
+from envs.eval_plot import SETTLE_WINDOW
 from envs.quad_env import TASKS, QuadEnv
 from envs.quadrotor import G
 
@@ -82,7 +83,7 @@ def rollout(env, policy, seed):
     the step that follows, so index i of every series is time i * policy_dt."""
     obs, _ = env.reset(seed=seed, options={"exact": True})
     log = {"p": [], "R": [], "r": [], "dist": [], "revs": [], "done": [], "thrust": [],
-           "thrust_cmd": [], "rate_cmd": [], "w": [], "mass": env.quad.m, "task": env.task}
+           "thrust_cmd": [], "rate_cmd": [], "w": [], "speed": [], "mass": env.quad.m, "task": env.task}
     total = 0.0
 
     def record():
@@ -95,6 +96,7 @@ def rollout(env, policy, seed):
         log["done"].append(env.flip_done)
         log["thrust"].append(q.m * q.thrust_acc)  # actual thrust force [N] (after motor lag)
         log["w"].append(q.w.copy())
+        log["speed"].append(np.linalg.norm(q.v))
 
     record()
     action_change = []  # sum over the 4 commands of |a - previous a|; large = chattering
@@ -116,6 +118,9 @@ def rollout(env, policy, seed):
     print(f"steps={t + 1}  total reward={total:.2f}  final dist={info['dist']:.3f}{flip}  "
           f"final upright={env.quad.R[2, 2]:.2f}  final z={env.quad.p[2]:.2f}  crashed={term}  "
           f"mean |a - prev a|={np.mean(action_change):.2f}")
+    tail = max(1, round(SETTLE_WINDOW / env.policy_dt))
+    print(f"last {SETTLE_WINDOW} s: mean dist={np.mean(log['dist'][-tail:]):.3f}  "
+          f"mean speed={np.mean(log['speed'][-tail:]):.2f}  final speed={log['speed'][-1]:.2f}")
     return log
 
 

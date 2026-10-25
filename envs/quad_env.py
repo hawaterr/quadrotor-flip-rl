@@ -44,7 +44,7 @@ class QuadEnv(gym.Env):
         self.action_space = spaces.Box(-1.0, 1.0, shape=(4,), dtype=np.float32)
         # rot matrix (9) + body rates (3) + velocity (3) + position error (3) + previous action (4)
         # flip only: + flip progress (1) + flip done flag (1)
-        n_obs = 22 + (2 if task == "flip" else 0)
+        n_obs = 22 + (2 if self.task == "flip" else 0)
         self.observation_space = spaces.Box(-np.inf, np.inf, shape=(n_obs,), dtype=np.float32)
 
     def _scale_action(self, a):
@@ -166,10 +166,14 @@ class QuadEnv(gym.Env):
                 self.flip_done = True
                 reward += r.completion_bonus
         else:
-            # Recovery: be level, stop rotating, stop falling
+            # Recovery: be level, stop rotating, fly back to the target and stop there. The pull towards the
+            # target is positive and largest at the target, so recovering always beats crashing early.
             reward += r.upright * upright
+            reward += r.target * np.exp(-dist / r.target_scale)
             reward -= r.body_rate * np.linalg.norm(q.w)
-            reward -= r.vertical_speed * abs(q.v[2])
+            # Capped, so being fast right after the flip can't outweigh the positive terms (crashing would
+            # then pay); models saved before speed_cap existed have no cap
+            reward -= r.speed * min(np.linalg.norm(q.v), r.get("speed_cap", np.inf))
 
         # Stay near the start point (climbing away is not free), keep actions smooth.
         # The first free_dist metres are free: a flip needs to climb first and ends up above the start.

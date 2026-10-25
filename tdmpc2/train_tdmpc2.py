@@ -71,6 +71,12 @@ def train(cfg):
           f"{seed_steps} random seed steps")
     writer = SummaryWriter(f"runs/tdmpc2_{task}_{time.strftime('%m%d-%H%M%S')}")
 
+    def save():
+        # The config goes with the model, so evaluation rebuilds the env it was trained in
+        env_cfg = cfg.get("env")
+        agent.save(f"models/tdmpc2_{task}.pt", task=task, config=cfg.to_dict(),
+                   env_cfg=env_cfg.to_dict() if env_cfg is not None else None)
+
     obs, _ = env.reset(seed=0)
     t0, ep_ret, ep_len_now, ep, tic, info = True, 0.0, 0, 0, time.time(), {}
     step = 0
@@ -104,14 +110,14 @@ def train(cfg):
                 if step % cfg.log_every_steps == 0:
                     for k, v in info.items():
                         writer.add_scalar(f"train/{k}", v, step)
+            if step > 0 and step % cfg.save_every == 0:
+                save()
+                print(f"checkpoint saved at step {step}")
     except KeyboardInterrupt:
         print(f"\ninterrupted at {step} steps, saving what we have")
     finally:
         writer.close()
-    # Save the config with the model, so evaluation rebuilds the env it was trained in
-    env_cfg = cfg.get("env")
-    agent.save(f"models/tdmpc2_{task}.pt", task=task, config=cfg.to_dict(),
-               env_cfg=env_cfg.to_dict() if env_cfg is not None else None)
+    save()
     print(f"saved models/tdmpc2_{task}.pt")
 
 

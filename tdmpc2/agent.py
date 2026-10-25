@@ -17,15 +17,15 @@ from configs import Config
 
 # --- math helpers ----------------------------------------------------------------------------------
 
-def symlog(x):
+def symlog(x): # symetric log
     return torch.sign(x) * torch.log1p(x.abs())
 
 
-def symexp(x):
+def symexp(x): # symetric exponential
     return torch.sign(x) * (torch.exp(x.abs()) - 1)
 
 
-class TwoHot:
+class TwoHot: # A two-hot vector spreads the probability over the two neighbouring bins that surround the value
     """Scalars <-> categorical over num_bins evenly spaced bins in symlog space."""
 
     def __init__(self, cfg):
@@ -55,7 +55,14 @@ class TwoHot:
 
 
 class SimNorm(nn.Module):
-    """Softmax over groups of `dim` features: keeps the latent on a product of simplices."""
+    """Softmax over groups of `dim` features: keeps the latent on a product of simplices.
+    Example:
+    input:   [ 2.0,  0.0, -1.0 |  1.0,  1.0,  1.0 ]
+              group 1      |      group 2
+    output:  [0.84, 0.11, 0.04 | 0.33, 0.33, 0.33 ]
+    It applies the softmax to small groups separately instead of once over the whole vector.
+    With 16 groups of 8, the latent becomes 16 independent categorical-like variables. Each group makes its own choice without affecting the others. 
+    """
 
     def __init__(self, dim):
         super().__init__()
@@ -98,22 +105,22 @@ class RunningScale:
 
 # --- world model -----------------------------------------------------------------------------------
 
-class WorldModel(nn.Module):
+class WorldModel(nn.Module): # holds all the networks
     def __init__(self, obs_dim, act_dim, cfg):
         super().__init__()
         self.cfg = cfg
         z, a, h = cfg.latent_dim, act_dim, [cfg.mlp_dim] * 2
-        self.encoder = mlp(obs_dim, [cfg.enc_dim], z, SimNorm(cfg.simnorm_dim))
-        self.dynamics = mlp(z + a, h, z, SimNorm(cfg.simnorm_dim))
-        self.reward = mlp(z + a, h, cfg.num_bins)
-        self.termination = mlp(z, h, 1)  # logit that the episode ended on arriving at z
-        self.pi = mlp(z, h, 2 * a)
-        self.qs = nn.ModuleList([mlp(z + a, h, cfg.num_bins, dropout=cfg.dropout) for _ in range(cfg.num_q)])
+        self.encoder = mlp(obs_dim, [cfg.enc_dim], z, SimNorm(cfg.simnorm_dim)) # h() in paper
+        self.dynamics = mlp(z + a, h, z, SimNorm(cfg.simnorm_dim)) # d() in paper
+        self.reward = mlp(z + a, h, cfg.num_bins) # r_hat() in paper
+        self.termination = mlp(z, h, 1)  # logit that the episode ended on arriving at z (not in paper)
+        self.pi = mlp(z, h, 2 * a) # p() in paper
+        self.qs = nn.ModuleList([mlp(z + a, h, cfg.num_bins, dropout=cfg.dropout) for _ in range(cfg.num_q)]) # 5 Qs in paper
         # Zero-init reward and Q outputs: predictions start at 0 instead of random
         for head in [self.reward, *self.qs]:
             nn.init.zeros_(head[-1].weight)
             nn.init.zeros_(head[-1].bias)
-        self.target_qs = nn.ModuleList([mlp(z + a, h, cfg.num_bins, dropout=cfg.dropout) for _ in range(cfg.num_q)])
+        self.target_qs = nn.ModuleList([mlp(z + a, h, cfg.num_bins, dropout=cfg.dropout) for _ in range(cfg.num_q)]) # 5 Qs_bar in paper
         self.target_qs.load_state_dict(self.qs.state_dict())
         self.target_qs.requires_grad_(False)
 
@@ -145,7 +152,7 @@ class WorldModel(nn.Module):
 
 # --- agent -----------------------------------------------------------------------------------------
 
-class TDMPC2:
+class TDMPC2: # TDMPC2 is the agent itself. It owns the world model, the two optimizers, and the MPPI warm-start state.
     def __init__(self, obs_dim, act_dim, cfg):
         """cfg: the `agent` section of configs/tdmpc2.yaml."""
         self.cfg = cfg
@@ -179,7 +186,7 @@ class TDMPC2:
             a = (mean if eval_mode else a)[0]
         return a.clamp(-1, 1).numpy()
 
-    def _estimate_value(self, z, actions):
+    def _estimate_value(self, z, actions): # equation 6 in paper
         """Discounted return of action sequences (H, N, A) from latent z (N, Z), plus a Q bootstrap."""
         G, discount, done = 0, 1, torch.zeros(z.shape[0], 1)
         for a in actions:
@@ -191,7 +198,7 @@ class TDMPC2:
         _, a, _ = self.model.policy(z)
         return G + discount * (1 - done) * self.model.q(z, a, self.two_hot, "avg")
 
-    def _plan(self, z, t0, eval_mode):
+    def _plan(self, z, t0, eval_mode): # the MPPI planner from Section 3.2.
         c, A = self.cfg, self.act_dim
         H, N, P = c.horizon, c.num_samples, c.num_pi_trajs
         actions = torch.empty(H, N, A)
@@ -223,7 +230,7 @@ class TDMPC2:
 
     # --- learning ---
 
-    def update(self, obs, action, reward, terminated):
+    def update(self, obs, action, reward, terminated): # equation 5, then 4 with _update_pi
         """obs (H+1, B, O), action/reward/terminated (H, B, ·). Returns a dict of losses."""
         c, m = self.cfg, self.model
         m.train()
@@ -262,12 +269,12 @@ class TDMPC2:
 
         with torch.no_grad():
             for p, tp in zip(m.qs.parameters(), m.target_qs.parameters()):
-                tp.lerp_(p, c.tau)
+                tp.lerp_(p, c.tau) # Q bars are slow moving targets of Q
         return {"consistency": consistency.item(), "reward": reward_loss.item(), "value": value_loss.item(),
                 "termination": term_loss.item(), "pi": pi_loss, "grad_norm": grad_norm.item(),
                 "q_scale": float(self.scale.value)}
 
-    def _update_pi(self, zs):
+    def _update_pi(self, zs): # equation 4
         c, m = self.cfg, self.model
         _, a, log_prob = m.policy(zs)
         q = m.q(zs, a, self.two_hot, "avg")  # gradients flow into the action only; Q is not stepped here
@@ -284,9 +291,11 @@ class TDMPC2:
     # --- checkpoints ---
 
     def save(self, path, **meta):
+        """Written to a temporary file first, so a load started mid-save never reads a half-written file."""
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         torch.save({"model": self.model.state_dict(), "cfg": self.cfg.to_dict(), "obs_dim": self.obs_dim,
-                    "act_dim": self.act_dim, "scale": self.scale.value, **meta}, path)
+                    "act_dim": self.act_dim, "scale": self.scale.value, **meta}, f"{path}.tmp")
+        os.replace(f"{path}.tmp", path)
 
     @classmethod
     def load(cls, path):

@@ -4,11 +4,13 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 
+SETTLE_WINDOW = 0.5  # s at the end of the episode over which the settle metrics are averaged
+
 
 def evaluate_and_plot(env, act, out_png, seed=0):
     """act(obs, t) -> action. Saves the plot to out_png."""
     obs, _ = env.reset(seed=seed, options={"exact": True})
-    log = {"t": [], "pos_err": [], "dist": [], "upright": [], "w": [], "revs": [], "thrust": []}
+    log = {"t": [], "pos_err": [], "dist": [], "upright": [], "w": [], "revs": [], "thrust": [], "speed": []}
     done, action_change = False, []
     while not done:
         action = np.clip(act(obs, env.t), -1, 1)
@@ -23,11 +25,15 @@ def evaluate_and_plot(env, act, out_png, seed=0):
         log["w"].append(np.linalg.norm(q.w))
         log["revs"].append(info["roll_progress"] / (2 * np.pi))
         log["thrust"].append(q.thrust_acc)
+        log["speed"].append(np.linalg.norm(q.v))
     task = env.task
     if task == "flip":
         print(f"flip done: {info['flip_done']}")
-    print(f"crashed: {term}, final dist: {log['dist'][-1]:.3f} m, final upright: {log['upright'][-1]:.2f}, "
-          f"mean |a - prev a|: {np.mean(action_change):.2f}")
+    tail = max(1, round(SETTLE_WINDOW / env.policy_dt))  # last 0.5 s: is it holding still at the target?
+    print(f"crashed: {term}, final dist: {log['dist'][-1]:.3f} m, final speed: {log['speed'][-1]:.2f} m/s, "
+          f"final upright: {log['upright'][-1]:.2f}, mean |a - prev a|: {np.mean(action_change):.2f}")
+    print(f"last {SETTLE_WINDOW} s: mean dist {np.mean(log['dist'][-tail:]):.3f} m, "
+          f"mean speed {np.mean(log['speed'][-tail:]):.2f} m/s")
 
     err = np.array(log["pos_err"])
     n = 5 if task == "flip" else 4
