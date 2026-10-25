@@ -25,6 +25,7 @@ from envs.quad_env import TASKS, QuadEnv
 from envs.quadrotor import G
 
 ARM = 0.15  # visual arm length [m]
+FRAME_DT = 0.02  # s per animation frame (50 fps); frames are picked so playback is about real time
 POLICIES = ["zero", "hover", "random"] + [f"{kind}_{task}" for kind in ("scripted", "ppo", "tdmpc2") for task in TASKS]
 
 
@@ -118,7 +119,8 @@ def rollout(env, policy, seed):
     return log
 
 
-def animate(log, policy_dt, save=None):
+def animate(log, policy_dt, save=None, start_pause=0.0):
+    """start_pause: seconds to hold the first frame (t = 0) before playing."""
     P = np.array(log["p"])
     # Arm tips in body frame (X configuration) and the body "up" axis
     arms = ARM * np.array([[1, 1, 0], [-1, -1, 0], [1, -1, 0], [-1, 1, 0]]) / np.sqrt(2)
@@ -203,11 +205,12 @@ def animate(log, policy_dt, save=None):
         # Everything that changes, so blitting redraws only these instead of the whole figure
         return arm1, arm2, front, trail, text, arrow, *(line for line, _, _ in lines)
 
-    frames = range(0, len(P), max(1, round(0.02 / policy_dt)))  # ~real time at 20 ms/frame
-    anim = FuncAnimation(fig, update, frames=frames, interval=20, blit=True)
+    hold = [0] * round(start_pause / FRAME_DT)  # repeat t = 0 so the starting position is easy to see
+    frames = hold + list(range(0, len(P), max(1, round(FRAME_DT / policy_dt))))
+    anim = FuncAnimation(fig, update, frames=frames, interval=FRAME_DT * 1000, blit=True)
     if save:
         os.makedirs(os.path.dirname(save) or ".", exist_ok=True)
-        anim.save(save, writer="pillow", fps=50)
+        anim.save(save, writer="pillow", fps=round(1 / FRAME_DT))
         print(f"saved {save}")
     plt.show()
 
@@ -227,4 +230,4 @@ if __name__ == "__main__":
         env_cfg = saved_env_config(task)
     env = QuadEnv(task=task, cfg=env_cfg)
     log = rollout(env, make_policy(cfg.policy, env, plan=cfg.plan, scripted=cfg.scripted), cfg.seed)
-    animate(log, env.policy_dt, cfg.save)
+    animate(log, env.policy_dt, cfg.save, cfg.start_pause)
