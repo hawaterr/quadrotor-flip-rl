@@ -56,9 +56,8 @@ python -m ppo.train_ppo task=flip eval=true
 Because checkpoints overwrite the model file, a new run replaces your current model, early (bad) checkpoints first. For PPO:
 
 ```bash
-python -m ppo.train_ppo task=flip name=ppo_flip_test                    # experiment: saves models/ppo_flip_test.zip, main model untouched
-python -m ppo.train_ppo task=flip init_model=models/ppo_flip.zip steps=500000 env.reward.speed=0.3
-                                                                        # fine-tune: continue from a saved model with changed settings
+python -m ppo.train_ppo task=flip name=ppo_flip_test # experiment: saves models/ppo_flip_test.zip, main model untouched
+python -m ppo.train_ppo task=flip init_model=models/ppo_flip.zip steps=500000 env.reward.speed=0.3 # fine-tune: continue from a saved model with changed settings
 ```
 
 Fine-tuning is useful when a reward change only needs to polish existing behaviour (e.g. remove a small oscillation): it takes minutes instead of a full run, and it can work where training from scratch with the same reward fails.
