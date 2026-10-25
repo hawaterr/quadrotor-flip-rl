@@ -14,8 +14,7 @@ import sys
 from omegaconf import OmegaConf
 
 CONFIG_DIR = os.path.dirname(os.path.abspath(__file__))
-ENV_TASKS = ("hover", "flip")              # tasks that use QuadEnv (env.yaml)
-TASKS = ENV_TASKS + ("pendulum",)          # every task an algorithm file may have a section for
+TASKS = ("hover", "flip")  # QuadEnv tasks; env.yaml and the algorithm files have a section per task
 
 
 class Config(dict):
@@ -42,7 +41,7 @@ def _load(name):
 def _env_section(task):
     """env.yaml's shared settings plus the section for `task`, as an OmegaConf config."""
     raw = _load("env")
-    shared = {k: v for k, v in raw.items() if k not in ENV_TASKS}
+    shared = {k: v for k, v in raw.items() if k not in TASKS}
     return OmegaConf.merge(shared, {"mid_flip": None}, raw[task], {"task": task})
 
 
@@ -66,8 +65,7 @@ def load_config(name, argv=None):
     if task is not None:
         if task not in TASKS:
             raise ValueError(f"task must be one of {TASKS}, got {task!r}")
-        if task in ENV_TASKS:
-            cfg.env = _env_section(task)
+        cfg.env = _env_section(task)
     OmegaConf.set_struct(cfg, True)  # from here on, merging an unknown key is an error
     task_section = raw.get(task) if task is not None else None
     cfg = OmegaConf.merge(cfg, task_section or {}, cli)

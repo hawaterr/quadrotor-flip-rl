@@ -14,8 +14,7 @@ import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 
-from configs import ENV_TASKS as TASKS  # noqa: F401  (re-exported for the scripts)
-from configs import load_env
+from configs import TASKS, load_env  # noqa: F401  (TASKS is re-exported for the scripts)
 from envs.quadrotor import G, Quadrotor
 
 # Observation scaling, to keep inputs roughly in [-1, 1]. Fixed, not a config setting: trained models
@@ -174,6 +173,9 @@ class QuadEnv(gym.Env):
             # Capped, so being fast right after the flip can't outweigh the positive terms (crashing would
             # then pay); models saved before speed_cap existed have no cap
             reward -= r.speed * min(np.linalg.norm(q.v), r.get("speed_cap", np.inf))
+            # Thrust away from hover (action 0): free when hovering steadily, costly when bobbing on full-on /
+            # full-off thrust. Models saved before thrust_effort existed don't have it
+            reward -= r.get("thrust_effort", 0.0) * action[0] ** 2
 
         # Stay near the start point (climbing away is not free), keep actions smooth.
         # The first free_dist metres are free: a flip needs to climb first and ends up above the start.

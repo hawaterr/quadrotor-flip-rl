@@ -22,7 +22,7 @@ import numpy as np
 from matplotlib.animation import FuncAnimation
 
 from configs import env_from_checkpoint, load_config, load_env
-from envs.eval_plot import SETTLE_WINDOW
+from envs.evaluation import SETTLE_WINDOW
 from envs.quad_env import TASKS, QuadEnv
 from envs.quadrotor import G
 

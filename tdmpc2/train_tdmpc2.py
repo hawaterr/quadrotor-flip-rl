@@ -1,33 +1,21 @@
-"""Train the minimal TD-MPC2 (tdmpc2/agent.py) on QuadEnv, or evaluate and plot a trained agent.
+"""Train the minimal TD-MPC2 (tdmpc2/agent.py) on QuadEnv.
 
 Settings: configs/tdmpc2.yaml (+ configs/env.yaml as env.*); override any of them as key=value.
+Watch a trained agent with animate_rollout.py; the learning curve is logged to results/ (plot_curves.py).
 Run from the repo root:
-    python -m tdmpc2.train_tdmpc2 task=pendulum                 # sanity check on Pendulum-v1 first
     python -m tdmpc2.train_tdmpc2                               # train hover; saves models/tdmpc2_hover.pt
     python -m tdmpc2.train_tdmpc2 task=flip                     # train flip; saves models/tdmpc2_flip.pt
-    python -m tdmpc2.train_tdmpc2 task=flip eval=true           # roll out saved agent (with MPPI) and plot
-    python -m tdmpc2.train_tdmpc2 task=flip eval=true plan=false seed=2   # policy prior alone, another start
 """
 import time
 
-import gymnasium as gym
 import numpy as np
 import torch
 from torch.utils.tensorboard import SummaryWriter
 
-from configs import env_from_checkpoint, load_config
+from configs import load_config
+from envs.evaluation import EvalLog, evaluate as evaluate_policy
 from envs.quad_env import QuadEnv
 from tdmpc2.agent import TDMPC2
-
-# Pendulum-v1 facts (fixed by Gymnasium, not settings)
-PENDULUM_DT = 0.05          # s per step
-PENDULUM_MAX_TORQUE = 2.0   # torque range is [-2, 2]; actions are rescaled to [-1, 1]
-
-
-def make_env(task, env_cfg, training=True):
-    if task == "pendulum":
-        return gym.wrappers.RescaleAction(gym.make("Pendulum-v1"), -1.0, 1.0)
-    return QuadEnv(cfg=env_cfg, training=training)
 
 
 class Buffer:
@@ -61,23 +49,25 @@ class Buffer:
 
 def train(cfg):
     task = cfg.task
-    env = make_env(task, cfg.get("env"))  # no env section for pendulum
+    env = QuadEnv(cfg=cfg.env, training=True)
     obs_dim, act_dim = env.observation_space.shape[0], env.action_space.shape[0]
     agent = TDMPC2(obs_dim, act_dim, cfg.agent)
     buf = Buffer(obs_dim, act_dim, cfg.steps, cfg.agent.horizon)
-    ep_len = env.spec.max_episode_steps if task == "pendulum" else env.max_steps
-    seed_steps = max(cfg.min_seed_steps, cfg.seed_episodes * ep_len)
-    print(f"{agent.n_params() / 1e6:.2f}M params, episode length {ep_len}, discount {cfg.agent.discount:.3f}, "
+    seed_steps = max(cfg.min_seed_steps, cfg.seed_episodes * env.max_steps)
+    print(f"{agent.n_params() / 1e6:.2f}M params, episode length {env.max_steps}, discount {cfg.agent.discount:.3f}, "
           f"{seed_steps} random seed steps")
     writer = SummaryWriter(f"runs/tdmpc2_{task}_{time.strftime('%m%d-%H%M%S')}")
 
     def save():
         # The config goes with the model, so evaluation rebuilds the env it was trained in
-        env_cfg = cfg.get("env")
-        agent.save(f"models/tdmpc2_{task}.pt", task=task, config=cfg.to_dict(),
-                   env_cfg=env_cfg.to_dict() if env_cfg is not None else None)
+        agent.save(f"models/tdmpc2_{task}.pt", task=task, config=cfg.to_dict(), env_cfg=cfg.env.to_dict())
 
-    obs, _ = env.reset(seed=0)
+    torch.manual_seed(cfg.train_seed)
+    np.random.seed(cfg.train_seed)
+    env.action_space.seed(cfg.train_seed)
+    # Learning curve: evaluation starts from rest, without the mid-roll curriculum
+    eval_log, eval_env = EvalLog(f"tdmpc2_{task}"), QuadEnv(cfg=cfg.env)
+    obs, _ = env.reset(seed=cfg.train_seed)
     t0, ep_ret, ep_len_now, ep, tic, info = True, 0.0, 0, 0, time.time(), {}
     step = 0
     try:
@@ -113,6 +103,10 @@ def train(cfg):
             if step > 0 and step % cfg.save_every == 0:
                 save()
                 print(f"checkpoint saved at step {step}")
+            if step % cfg.eval_every == 0:
+                act = lambda o, t: agent.act(o, t0=t == 0, eval_mode=True)  # with MPPI, the actual algorithm
+                eval_log.write(step, time.time() - tic, evaluate_policy(eval_env, act, cfg.eval_seeds))
+                t0 = True  # evaluation used the MPPI warm start; restart it for the training episode
     except KeyboardInterrupt:
         print(f"\ninterrupted at {step} steps, saving what we have")
     finally:
@@ -121,57 +115,7 @@ def train(cfg):
     print(f"saved models/tdmpc2_{task}.pt")
 
 
-def animate_pendulum(thetas, torques, dt):
-    """Swinging rod on the left, torque over time on the right."""
-    import matplotlib.pyplot as plt
-    from matplotlib.animation import FuncAnimation
-
-    T = np.arange(len(thetas)) * dt
-    fig, (ax, ax_u) = plt.subplots(1, 2, figsize=(9, 4), gridspec_kw={"width_ratios": [1.2, 1]})
-    ax.set_xlim(-1.2, 1.2); ax.set_ylim(-1.2, 1.2); ax.set_aspect("equal"); ax.axis("off")
-    rod, = ax.plot([], [], "-o", color="C3", lw=4, ms=8, markevery=[1])  # dot = the free end
-    ax.plot(0, 0, "ks", ms=8)  # pivot
-    text = ax.text(-1.15, 1.1, "")
-    ax_u.set_xlim(0, T[-1]); ax_u.set_ylim(-1.1 * PENDULUM_MAX_TORQUE, 1.1 * PENDULUM_MAX_TORQUE); ax_u.set_ylabel("torque"); ax_u.set_xlabel("time [s]")
-    u_line, = ax_u.plot([], [], "C0", drawstyle="steps-post")
-
-    def update(i):
-        rod.set_data([0, np.sin(thetas[i])], [0, np.cos(thetas[i])])
-        text.set_text(f"t={T[i]:.2f}s")
-        u_line.set_data(T[: min(i + 1, len(torques))], torques[: i + 1])
-        return rod, text, u_line
-
-    anim = FuncAnimation(fig, update, frames=len(thetas), interval=dt * 1000, blit=False)
-    plt.tight_layout(); plt.show()
-    return anim
-
-
-def evaluate(cfg):
-    task, plan, seed = cfg.task, cfg.plan, cfg.seed
-    agent, ckpt = TDMPC2.load(f"models/tdmpc2_{task}.pt")
-    # MPPI and the policy sample with torch/numpy, so seed those too for a repeatable rollout
-    torch.manual_seed(seed); np.random.seed(seed)
-    if task == "pendulum":
-        env = make_env(task, None, training=False)
-        obs, _ = env.reset(seed=seed)
-        total, done, t = 0.0, False, 0
-        thetas, torques = [np.arctan2(obs[1], obs[0])], []  # obs = [cos, sin, angular velocity]; 0 = upright
-        while not done:
-            a = agent.act(obs, t0=t == 0, eval_mode=True, plan=plan)
-            obs, r, term, trunc, _ = env.step(a)
-            total, done, t = total + r, term or trunc, t + 1
-            thetas.append(np.arctan2(obs[1], obs[0]))
-            torques.append(PENDULUM_MAX_TORQUE * a[0])
-        print(f"pendulum return: {total:.1f}")
-        animate_pendulum(np.array(thetas), np.array(torques), dt=PENDULUM_DT)
-        return
-    from envs.eval_plot import evaluate_and_plot
-    evaluate_and_plot(make_env(task, env_from_checkpoint(ckpt, task), training=False),
-                      lambda obs, t: agent.act(obs, t0=t == 0, eval_mode=True, plan=plan),
-                      f"plots/{task}_tdmpc2_eval.png", seed=seed)
-
-
 if __name__ == "__main__":
     cfg = load_config("tdmpc2")
     torch.set_num_threads(cfg.threads)
-    evaluate(cfg) if cfg.eval else train(cfg)
+    train(cfg)

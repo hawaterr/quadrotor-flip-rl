@@ -1,15 +1,14 @@
 # TD-MPC2. Override anything on the command line, e.g.
 #   python -m tdmpc2.train_tdmpc2 task=flip steps=60000 agent.num_samples=512
-#   python -m tdmpc2.train_tdmpc2 task=flip eval=true plan=false seed=2
 # The env settings (env.*) come from env.yaml for the chosen task.
 
-task: hover               # hover | flip | pendulum (Pendulum-v1, a quick sanity check)
-seed: 0                   # eval: seed of the episode's starting state
-eval: false               # true: roll out the saved agent and plot it instead of training
-plan: true                # eval: false acts with the policy prior alone, without MPPI
+task: hover               # hover | flip
+train_seed: 0             # seed of the training run (network init, exploration, env), for reproducible runs
 
 steps: 100000             # env steps to train for
 save_every: 5000          # env steps between checkpoints (models/tdmpc2_<task>.pt), to check progress mid-run
+eval_every: 2500          # env steps between evaluations (with MPPI), logged to results/tdmpc2_<task>.csv
+eval_seeds: [0, 1, 2, 3, 4]  # one evaluation episode per seed (start from rest)
 threads: 4                # torch CPU threads
 plan_after: 0             # act with the policy prior (fast) until this step, then with MPPI
 min_seed_steps: 1000      # random-action steps before learning starts: max(min_seed_steps,
@@ -54,18 +53,11 @@ agent:
   max_std: 2.0
 
 # Per-task overrides of the settings above
-pendulum:
-  steps: 15000
-
 hover:
-  env:
-    policy_dt: 0.02       # s; a 3-step plan at env.yaml's 0.01 s only sees 30 ms ahead
   agent:
-    discount: 0.9801      # 0.99 per 10 ms, as PPO
+    discount: 0.98        # per 0.02 s step (env.policy_dt): a ~1 s horizon, same as PPO
 
 flip:
   steps: 60000            # the last run stopped improving after ~35k steps
-  env:
-    policy_dt: 0.02       # s; a flip takes ~0.6 s, a 3-step plan at 0.01 s only sees 30 ms ahead
   agent:
-    discount: 0.9801      # 0.99 per 10 ms, as PPO
+    discount: 0.98        # per 0.02 s step (env.policy_dt): a ~1 s horizon, same as PPO

@@ -1,8 +1,36 @@
 # quadrotor-flip-rl
 
-Teaching a simulated quadrotor to do a flip with reinforcement learning: one roll flip, then recover to level and stop rotating. PPO (Stable-Baselines3) does the flip; now trying a minimal single-task TD-MPC2 on the same env.
+Teaching a simulated quadrotor to do a flip with reinforcement learning: one roll flip, then recover to level. Comparison between PPO and TD-MPC2.
 
 **Current step: hover.** Before flipping, the agent learns to hold a fixed point from a perturbed start (random offset, velocity, tilt and body rates). Both tasks live in one env (`QuadEnv(task="hover" | "flip")`), which share dynamics and actions but have their own reward and termination.
+
+## Results
+
+One training run each, from scratch, with the same reward and the same control period (0.02 s per env step).
+
+<table>
+  <tr><th>PPO</th><th>TD-MPC2</th></tr>
+  <tr>
+    <td><img src="docs/ppo_flip.gif" alt="PPO: flip, fly back to the start point and hover"></td>
+    <td><img src="docs/tdmpc2_flip.gif" alt="TD-MPC2: flip, fly back towards the start point and hover"></td>
+  </tr>
+</table>
+
+![Evaluation return and success rate vs env steps](docs/learning_curves.png)
+
+Evaluated on 5 starts from rest (`envs/evaluation.py`). Success means: flip done, no crash, back within 0.3 m of the start point, slower than 0.2 m/s over the last 0.5 s, and upright.
+
+| | PPO | TD-MPC2 |
+|---|---|---|
+| Success | 5/5 | pending (see below) |
+| Final distance to start point | 0.07 m | |
+| Speed, last 0.5 s | 0.001 m/s | |
+| Env steps to first success | 500k | |
+| Training steps / wall-clock time | 1M / 22 min | |
+
+The TD-MPC2 GIF is the current agent, trained before the latest reward change (`thrust_effort`) and without evaluation logging, so it has no curve yet. Its benchmark run comes after the training speed-up (`TDMPC2_SPEEDUP.md`).
+
+Regenerate: `python animate_rollout.py policy=ppo_flip save=docs/ppo_flip.gif` (same for `tdmpc2_flip`) and `python plot_curves.py`.
 
 ## Files
 
@@ -10,15 +38,17 @@ Teaching a simulated quadrotor to do a flip with reinforcement learning: one rol
 envs/                   simulator and Gym env, shared by both algorithms
   quadrotor.py          quadrotor dynamics
   quad_env.py           Gymnasium environment, task="hover" or task="flip"
-  eval_plot.py          roll out one episode with any policy and plot it
+  evaluation.py         evaluate a policy over fixed starts; logs the learning curve during training
 ppo/
-  train_ppo.py          train and evaluate PPO
+  train_ppo.py          train PPO
 tdmpc2/
   agent.py              minimal single-task TD-MPC2 (world model, MPPI planner, ~1M params), CPU friendly
-  train_tdmpc2.py       train and evaluate TD-MPC2 (--task pendulum for a quick sanity check)
+  train_tdmpc2.py       train TD-MPC2
 animate_rollout.py      run one episode of any policy and animate it
-configs/                every tunable number: env.yaml, ppo.yaml, tdmpc2.yaml (see Configuration)
-models/  plots/  runs/  outputs: trained models, eval plots, TensorBoard logs (not tracked by git)
+plot_curves.py          plot the learning curves (results/*.csv) to docs/learning_curves.png
+configs/                every tunable number: env.yaml, ppo.yaml, tdmpc2.yaml, ... (see Configuration)
+results/  docs/         learning-curve logs and README figures (tracked by git)
+models/  plots/  runs/  outputs: trained models, plots, TensorBoard logs (not tracked by git)
 ```
 
 Run every command from the repo root.
@@ -50,7 +80,7 @@ Training saves the model every `save_every` env steps (`configs/ppo.yaml`: 100k,
 
 ```bash
 python animate_rollout.py policy=tdmpc2_flip plan=false     # latest checkpoint of a running TD-MPC2 flip run
-python -m ppo.train_ppo task=flip eval=true
+python plot_curves.py                                       # learning curves so far (results/ is written every eval_every steps)
 ```
 
 Because checkpoints overwrite the model file, a new run replaces your current model, early (bad) checkpoints first. For PPO:
@@ -73,18 +103,15 @@ python -m ppo.train_ppo task=flip env.reward.smooth=0.3     # an experiment: any
 # watch training curves
 tensorboard --logdir runs
 
-# roll out the saved policy and plot it to plots/<task>_eval.png (seed picks the start)
-python -m ppo.train_ppo eval=true
-python -m ppo.train_ppo task=flip eval=true seed=2
-
-# TD-MPC2: sanity check on Pendulum-v1 first, then hover / flip; saves models/tdmpc2_<task>.pt
-# Control period, MPPI size and the rest are in configs/tdmpc2.yaml (about 10 steps/s on a laptop CPU).
-python -m tdmpc2.train_tdmpc2 task=pendulum
+# TD-MPC2: train hover / flip; saves models/tdmpc2_<task>.pt
+# MPPI size and the rest are in configs/tdmpc2.yaml (about 10 steps/s on a laptop CPU).
 python -m tdmpc2.train_tdmpc2 task=flip
-python -m tdmpc2.train_tdmpc2 task=flip eval=true             # plan=false: the policy prior alone, without MPPI
 
-# animate a rollout: policy is one of zero, hover, random, scripted_hover, scripted_flip, ppo_hover, ppo_flip, tdmpc2_hover, tdmpc2_flip
-# (scripted_* are hand-written controllers, a baseline; ppo_<task> / tdmpc2_<task> load from models/; plan=false for tdmpc2 without MPPI)
+# learning curves: evaluation return and success rate vs env steps, from the logs both trainers write
+python plot_curves.py
+
+# watch a model: policy is zero, hover, random, scripted_hover, scripted_flip, or any model in models/ (ppo_*, tdmpc2_*)
+# (scripted_* are hand-written controllers, a baseline; seed picks the start; plan=false for tdmpc2 without MPPI)
 python animate_rollout.py policy=ppo_hover
 python animate_rollout.py policy=ppo_flip save=plots/flip.gif
 ```

@@ -3,18 +3,19 @@
 # The env settings (env.*) come from env.yaml for the chosen task, including env.policy_dt.
 
 task: hover               # hover | flip
-seed: 0                   # eval: seed of the episode's starting state
-eval: false               # true: roll out the saved model and plot it instead of training
+train_seed: 0             # seed of the training run (network init, exploration, env), for reproducible runs
 
 steps: 1000000            # env steps to train for
 save_every: 100000        # env steps between checkpoints (models/ppo_<task>.zip), to check progress mid-run
+eval_every: 25000         # env steps between evaluations, logged to results/<model name>.csv (learning curve)
+eval_seeds: [0, 1, 2, 3, 4]  # one evaluation episode per seed (start from rest, deterministic policy)
 init_model: null          # a saved model to continue training from (fine-tuning), e.g. models/ppo_flip_v1.zip
 name: null                # model file name in models/ (default ppo_<task>); use another for experiments,
                           #   so their checkpoints don't overwrite the main model
 n_envs: 8                 # parallel environments
 n_steps: 1024             # rollout length per env between updates
 batch_size: 2048
-gamma: 0.99               # discount per control step
+gamma: 0.98               # discount per 0.02 s step (env.policy_dt): a ~1 s horizon
 learning_rate: 3e-4
 ent_coef: 0.0             # entropy bonus
 net_arch: [128, 128]      # hidden layers of the policy and value networks
