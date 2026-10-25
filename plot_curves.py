@@ -14,7 +14,7 @@ import matplotlib.ticker
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
-from configs import load_config, load_env  # noqa: E402
+from configs import load_config  # noqa: E402
 
 # Validated reference palette (categorical slots 1, 2 in fixed order) and recessive ink, light surface
 SERIES = ["#2a78d6", "#eb6834"]
@@ -25,17 +25,6 @@ def read_log(path):
     with open(path) as f:
         rows = list(csv.DictReader(f))
     return {k: [float(r[k]) for r in rows] for k in rows[0]} if rows else None
-
-
-def baseline_return(policy, seeds):
-    """Mean evaluation return of a scripted baseline on the current env.yaml, for a reference line."""
-    from animate_rollout import make_policy, task_of
-    from envs.evaluation import evaluate
-    from envs.quad_env import QuadEnv
-
-    env = QuadEnv(cfg=load_env(task_of(policy)))
-    scripted = load_config("animate_rollout", []).scripted
-    return evaluate(env, make_policy(policy, env, scripted=scripted), seeds)["return"]
 
 
 def main():
@@ -68,11 +57,6 @@ def main():
     ax_s.set_ylabel("% of evaluation starts")
     ax_s.set_ylim(-5, 105)
     ax_r.set_ylabel("return (mean over starts)")
-    if cfg.baseline:
-        ret = baseline_return(cfg.baseline, cfg.eval_seeds)
-        ax_r.axhline(ret, color=TEXT_2, lw=1, ls="--")
-        ax_r.annotate(f"{cfg.baseline} baseline", (0.01, ret), xycoords=("axes fraction", "data"),
-                      xytext=(0, 4), textcoords="offset points", fontsize=8, color=TEXT_2)
     handles, labels = ax_r.get_legend_handles_labels()
     fig.legend(handles, labels, frameon=False, loc="upper center", ncol=len(labels))
     fig.tight_layout(rect=(0, 0, 1, 0.93))

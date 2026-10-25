@@ -4,7 +4,5 @@
 runs:                         # legend label: evaluation log written during training (results/<model name>.csv)
   PPO: results/ppo_flip.csv
   TD-MPC2: results/tdmpc2_flip.csv
-baseline: scripted_flip       # policy whose evaluation return is drawn as a dashed reference line (null: none)
-eval_seeds: [0, 1, 2, 3, 4]   # starts for the baseline's evaluation (same as the trainers' eval_seeds)
 log_x: true                   # log-scale env steps: PPO trains for ~1M steps, TD-MPC2 for ~60k
 out: docs/learning_curves.png
