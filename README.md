@@ -6,13 +6,21 @@ Teaching a simulated quadrotor to do a flip with reinforcement learning: one rol
 
 ## Files
 
-- `quadrotor.py`: quadrotor dynamics
-- `quad_env.py`: Gymnasium environment, `task="hover"` or `task="flip"`
-- `train_ppo.py`: train and evaluate PPO
-- `tdmpc2.py`: minimal single-task TD-MPC2 (world model, MPPI planner, ~1M params), CPU friendly
-- `train_tdmpc2.py`: train and evaluate TD-MPC2 (`--task pendulum` for a quick sanity check)
-- `eval_plot.py`: roll out one episode with any policy and plot it
-- `visualize.py`: animate a rollout
+```
+envs/                   simulator and Gym env, shared by both algorithms
+  quadrotor.py          quadrotor dynamics
+  quad_env.py           Gymnasium environment, task="hover" or task="flip"
+  eval_plot.py          roll out one episode with any policy and plot it
+ppo/
+  train_ppo.py          train and evaluate PPO
+tdmpc2/
+  agent.py              minimal single-task TD-MPC2 (world model, MPPI planner, ~1M params), CPU friendly
+  train_tdmpc2.py       train and evaluate TD-MPC2 (--task pendulum for a quick sanity check)
+visualize.py            animate a rollout of any policy
+models/  plots/  runs/  outputs: trained models, eval plots, TensorBoard logs (not tracked by git)
+```
+
+Run every command from the repo root.
 
 ## Setup
 
@@ -32,26 +40,26 @@ python -c "import gymnasium, stable_baselines3, torch, matplotlib; print('ok', t
 ## Usage
 
 ```bash
-# train (default 1M steps); saves ppo_<task>.zip. --task is hover (default) or flip
-python train_ppo.py --steps 300000
-python train_ppo.py --task flip
+# train (default 1M steps); saves models/ppo_<task>.zip. --task is hover (default) or flip
+python -m ppo.train_ppo --steps 300000
+python -m ppo.train_ppo --task flip
 
 # watch training curves
 tensorboard --logdir runs
 
-# roll out the saved policy and plot it to <task>_eval.png
-python train_ppo.py --eval
-python train_ppo.py --task flip --eval
+# roll out the saved policy and plot it to plots/<task>_eval.png (--seed picks the start)
+python -m ppo.train_ppo --eval
+python -m ppo.train_ppo --task flip --eval
 
-# TD-MPC2: sanity check on Pendulum-v1 first, then hover / flip; saves tdmpc2_<task>.pt
+# TD-MPC2: sanity check on Pendulum-v1 first, then hover / flip; saves models/tdmpc2_<task>.pt
 # It acts every 0.02 s (--ctrl-dt) so its 3-step plan sees further ahead. On CPU it is slow per step,
 # so --samples/--iterations shrink MPPI and --plan-after N acts with the policy prior (fast) until step N.
-python train_tdmpc2.py --task pendulum --steps 15000 --samples 256 --iterations 4
-python train_tdmpc2.py --task flip --samples 256 --iterations 4
-python train_tdmpc2.py --task flip --eval          # add --no-plan to roll out the policy prior alone
+python -m tdmpc2.train_tdmpc2 --task pendulum --steps 15000 --samples 256 --iterations 4
+python -m tdmpc2.train_tdmpc2 --task flip --samples 256 --iterations 4
+python -m tdmpc2.train_tdmpc2 --task flip --eval   # add --no-plan to roll out the policy prior alone
 
 # animate a rollout: --policy is one of zero, hover, random, scripted_hover, scripted_flip, ppo_hover, ppo_flip, tdmpc2_hover, tdmpc2_flip
-# (scripted_* are hand-written controllers, a baseline to compare PPO against; ppo_<task> loads ppo_<task>.zip)
+# (scripted_* are hand-written controllers, a baseline to compare PPO against; ppo_<task> / tdmpc2_<task> load from models/; add --no-plan for tdmpc2 without MPPI)
 python visualize.py --policy ppo_hover
-python visualize.py --policy ppo_flip --save flip.gif
+python visualize.py --policy ppo_flip --save plots/flip.gif
 ```

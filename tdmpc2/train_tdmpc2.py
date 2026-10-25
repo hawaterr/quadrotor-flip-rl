@@ -1,9 +1,10 @@
 """Train the minimal TD-MPC2 (tdmpc2.py) on QuadEnv, or evaluate and plot a trained agent.
 
-    python train_tdmpc2.py --task pendulum --steps 20000   # sanity check on Pendulum-v1 first
-    python train_tdmpc2.py                                 # train hover; saves tdmpc2_hover.pt
-    python train_tdmpc2.py --task flip                     # train flip; saves tdmpc2_flip.pt
-    python train_tdmpc2.py --task flip --eval              # roll out saved agent (with MPPI) and plot
+Run from the repo root:
+    python -m tdmpc2.train_tdmpc2 --task pendulum --steps 20000   # sanity check on Pendulum-v1 first
+    python -m tdmpc2.train_tdmpc2                                 # train hover; saves models/tdmpc2_hover.pt
+    python -m tdmpc2.train_tdmpc2 --task flip                     # train flip; saves models/tdmpc2_flip.pt
+    python -m tdmpc2.train_tdmpc2 --task flip --eval              # roll out saved agent (with MPPI) and plot
 """
 import argparse
 import time
@@ -13,8 +14,8 @@ import numpy as np
 import torch
 from torch.utils.tensorboard import SummaryWriter
 
-from quad_env import TASKS, QuadEnv
-from tdmpc2 import TDMPC2, Config
+from envs.quad_env import TASKS, QuadEnv
+from tdmpc2.agent import TDMPC2, Config
 
 
 def make_env(task, ctrl_dt, train=True, smooth_coef=None):
@@ -102,8 +103,8 @@ def train(task, steps, ctrl_dt, plan_after, cfg, smooth_coef=None):
         print(f"\ninterrupted at {step} steps, saving what we have")
     finally:
         writer.close()
-    agent.save(f"tdmpc2_{task}.pt", task=task, ctrl_dt=ctrl_dt, smooth_coef=getattr(env, "smooth_coef", None))
-    print(f"saved tdmpc2_{task}.pt")
+    agent.save(f"models/tdmpc2_{task}.pt", task=task, ctrl_dt=ctrl_dt, smooth_coef=getattr(env, "smooth_coef", None))
+    print(f"saved models/tdmpc2_{task}.pt")
 
 
 def animate_pendulum(thetas, torques, dt):
@@ -132,7 +133,7 @@ def animate_pendulum(thetas, torques, dt):
 
 
 def evaluate(task, plan=True, seed=0):
-    agent, ckpt = TDMPC2.load(f"tdmpc2_{task}.pt")
+    agent, ckpt = TDMPC2.load(f"models/tdmpc2_{task}.pt")
     # MPPI and the policy sample with torch/numpy, so seed those too for a repeatable rollout
     torch.manual_seed(seed); np.random.seed(seed)
     if task == "pendulum":
@@ -149,10 +150,10 @@ def evaluate(task, plan=True, seed=0):
         print(f"pendulum return: {total:.1f}")
         animate_pendulum(np.array(thetas), np.array(torques), dt=0.05)  # Pendulum-v1 steps at 0.05 s
         return
-    from eval_plot import evaluate_and_plot
+    from envs.eval_plot import evaluate_and_plot
     evaluate_and_plot(make_env(task, ckpt["ctrl_dt"], train=False, smooth_coef=ckpt.get("smooth_coef")),
                       lambda obs, t: agent.act(obs, t0=t == 0, eval_mode=True, plan=plan),
-                      f"{task}_tdmpc2_eval.png", seed=seed)
+                      f"plots/{task}_tdmpc2_eval.png", seed=seed)
 
 
 if __name__ == "__main__":

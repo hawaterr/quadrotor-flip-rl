@@ -5,6 +5,7 @@ consistency loss, discrete (two-hot, symlog) regression for reward and value, a 
 and MPPI planning in latent space. Dropped: everything multi-task (task embeddings, action masks).
 Added: a termination head, since QuadEnv ends episodes on a crash (the original assumes fixed-length episodes).
 """
+import os
 from dataclasses import asdict, dataclass
 
 import numpy as np
@@ -319,6 +320,7 @@ class TDMPC2:
     # --- checkpoints ---
 
     def save(self, path, **meta):
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         torch.save({"model": self.model.state_dict(), "cfg": asdict(self.cfg), "obs_dim": self.obs_dim,
                     "act_dim": self.act_dim, "scale": self.scale.value, **meta}, path)
 

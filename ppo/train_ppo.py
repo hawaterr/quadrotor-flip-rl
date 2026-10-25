@@ -1,16 +1,17 @@
 """Train PPO on QuadEnv, or evaluate and plot a trained policy.
 
-    python train_ppo.py                         # train hover; saves ppo_hover.zip
-    python train_ppo.py --task flip             # train flip; saves ppo_flip.zip
-    python train_ppo.py --task flip --eval      # roll out saved policy and plot
+Run from the repo root:
+    python -m ppo.train_ppo                         # train hover; saves models/ppo_hover.zip
+    python -m ppo.train_ppo --task flip             # train flip; saves models/ppo_flip.zip
+    python -m ppo.train_ppo --task flip --eval      # roll out saved policy and plot to plots/flip_eval.png
 """
 import argparse
 
 from stable_baselines3 import PPO
 from stable_baselines3.common.env_util import make_vec_env
 
-from eval_plot import evaluate_and_plot
-from quad_env import TASKS, QuadEnv
+from envs.eval_plot import evaluate_and_plot
+from envs.quad_env import TASKS, QuadEnv
 
 
 def train(task, steps):
@@ -26,14 +27,14 @@ def train(task, steps):
         print(f"\ninterrupted at {model.num_timesteps} steps, saving what we have")
     finally:
         env.close()
-    model.save(f"ppo_{task}")
-    print(f"saved ppo_{task}.zip")
+    model.save(f"models/ppo_{task}")  # SB3 creates the folder and adds .zip
+    print(f"saved models/ppo_{task}.zip")
 
 
 def evaluate(task, seed=0):
-    model = PPO.load(f"ppo_{task}")
+    model = PPO.load(f"models/ppo_{task}")
     evaluate_and_plot(QuadEnv(task=task), lambda obs, t: model.predict(obs, deterministic=True)[0],
-                      f"{task}_eval.png", seed=seed)
+                      f"plots/{task}_eval.png", seed=seed)
 
 
 if __name__ == "__main__":

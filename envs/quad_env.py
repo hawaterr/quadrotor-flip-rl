@@ -11,7 +11,7 @@ import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 
-from quadrotor import G, Quadrotor
+from envs.quadrotor import G, Quadrotor
 
 TASKS = ("hover", "flip")
 # Per-task defaults, used when the matching constructor argument is None

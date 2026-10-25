@@ -7,20 +7,21 @@ The policy name also picks the task: <name>_flip runs the flip env, everything e
     python visualize.py --policy zero             # thrust off: should fall
     python visualize.py --policy hover            # constant hover thrust, no feedback: drifts from the perturbed start
     python visualize.py --policy random
-    python visualize.py --policy ppo_hover        # trained model from train_ppo.py (ppo_hover.zip)
-    python visualize.py --policy ppo_flip         # trained model from train_ppo.py --task flip (ppo_flip.zip)
-    python visualize.py --policy tdmpc2_flip      # trained agent from train_tdmpc2.py --task flip (tdmpc2_flip.pt), with MPPI
+    python visualize.py --policy ppo_hover        # trained model from ppo/train_ppo.py (models/ppo_hover.zip)
+    python visualize.py --policy ppo_flip         # trained model from ppo/train_ppo.py --task flip (models/ppo_flip.zip)
+    python visualize.py --policy tdmpc2_flip      # trained agent from tdmpc2/train_tdmpc2.py --task flip (models/tdmpc2_flip.pt), with MPPI
     python visualize.py --policy tdmpc2_flip --no-plan   # same agent, policy prior only (no MPPI)
-    python visualize.py --save hover.gif          # also save the animation
+    python visualize.py --save plots/hover.gif    # also save the animation
 """
 import argparse
+import os
 
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.animation import FuncAnimation
 
-from quad_env import TASKS, QuadEnv
-from quadrotor import G
+from envs.quad_env import TASKS, QuadEnv
+from envs.quadrotor import G
 
 ARM = 0.15  # visual arm length [m]
 POLICIES = ["zero", "hover", "random"] + [f"{kind}_{task}" for kind in ("scripted", "ppo", "tdmpc2") for task in TASKS]
@@ -41,11 +42,11 @@ def make_policy(name, env, plan=True):
         return lambda obs, t: env.action_space.sample()
     if name.startswith("ppo_"):
         from stable_baselines3 import PPO
-        model = PPO.load(name)  # ppo_<task>.zip, as saved by train_ppo.py
+        model = PPO.load(f"models/{name}")  # models/ppo_<task>.zip, as saved by ppo/train_ppo.py
         return lambda obs, t: model.predict(obs, deterministic=True)[0]
     if name.startswith("tdmpc2_"):
-        from tdmpc2 import TDMPC2
-        agent, _ = TDMPC2.load(f"{name}.pt")  # tdmpc2_<task>.pt, as saved by train_tdmpc2.py
+        from tdmpc2.agent import TDMPC2
+        agent, _ = TDMPC2.load(f"models/{name}.pt")  # models/tdmpc2_<task>.pt, as saved by tdmpc2/train_tdmpc2.py
         return lambda obs, t: agent.act(obs, t0=t == 0, eval_mode=True, plan=plan)
 
     # scripted_hover: cascaded PD controller. Desired acceleration from position/velocity error sets the
@@ -201,6 +202,7 @@ def animate(log, ctrl_dt, save=None):
     frames = range(0, len(P), max(1, round(0.02 / ctrl_dt)))  # ~real time at 20 ms/frame
     anim = FuncAnimation(fig, update, frames=frames, interval=20, blit=True)
     if save:
+        os.makedirs(os.path.dirname(save) or ".", exist_ok=True)
         anim.save(save, writer="pillow", fps=50)
         print(f"saved {save}")
     plt.show()
@@ -210,14 +212,14 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--policy", default="scripted_hover", choices=POLICIES)
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--save", default=None, help="e.g. hover.gif")
+    ap.add_argument("--save", default=None, help="e.g. plots/hover.gif")
     ap.add_argument("--no-plan", action="store_true", help="tdmpc2_*: act with the policy prior instead of MPPI")
     args = ap.parse_args()
 
     ctrl_dt, smooth_coef = 0.01, None
     if args.policy.startswith("tdmpc2_"):
         import torch
-        ckpt = torch.load(f"{args.policy}.pt", weights_only=False)
+        ckpt = torch.load(f"models/{args.policy}.pt", weights_only=False)
         ctrl_dt, smooth_coef = ckpt["ctrl_dt"], ckpt.get("smooth_coef")  # the env it was trained in
     env = QuadEnv(task=task_of(args.policy), ctrl_dt=ctrl_dt, smooth_coef=smooth_coef)
     log = rollout(env, make_policy(args.policy, env, plan=not args.no_plan), args.seed)

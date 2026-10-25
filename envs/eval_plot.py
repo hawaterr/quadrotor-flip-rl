@@ -1,4 +1,6 @@
 """Roll out one QuadEnv episode with any policy and plot it (shared by train_ppo.py and train_tdmpc2.py)."""
+import os
+
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -39,4 +41,5 @@ def evaluate_and_plot(env, act, out_png, seed=0):
     if task == "flip":
         axs[4].plot(log["t"], log["revs"]); axs[4].set_ylabel("roll revs")
     axs[-1].set_xlabel("time [s]")
+    os.makedirs(os.path.dirname(out_png) or ".", exist_ok=True)
     plt.tight_layout(); plt.savefig(out_png); plt.show()

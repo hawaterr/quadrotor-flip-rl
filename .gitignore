@@ -8,20 +8,22 @@ venv/
 # Training outputs
 # TensorBoard logs
 runs/
-# Saved SB3 models, e.g. ppo_flip.zip
+# Trained models (models/ppo_flip.zip, models/tdmpc2_flip.pt, ...)
+models/
 *.zip
-# Saved TD-MPC2 agents, e.g. tdmpc2_flip.pt
 *.pt
 checkpoints/
 logs/
 wandb/
 
 # Generated plots and animations
+plots/
 /*.png
 /*.gif
 /*.mp4
 
 # PDFs (papers, exported figures)
+papers/
 *.pdf
 
 # Editors / OS
