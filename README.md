@@ -44,6 +44,25 @@ All settings live in YAML files in `configs/`, not in the code. Each script load
 
 Every model is saved with the full config it was trained with (`models/ppo_<task>.yaml`, inside `models/tdmpc2_<task>.pt`), so evaluation and `animate_rollout.py` rebuild the same environment even after you edit the YAML.
 
+## Checkpoints and fine-tuning
+
+Training saves the model every `save_every` env steps (`configs/ppo.yaml`: 100k, `configs/tdmpc2.yaml`: 5k), not only at the end or on Ctrl-C. It writes the usual model file, so you can check progress while training continues, with the usual commands:
+
+```bash
+python animate_rollout.py policy=tdmpc2_flip plan=false     # latest checkpoint of a running TD-MPC2 flip run
+python -m ppo.train_ppo task=flip eval=true
+```
+
+Because checkpoints overwrite the model file, a new run replaces your current model, early (bad) checkpoints first. For PPO:
+
+```bash
+python -m ppo.train_ppo task=flip name=ppo_flip_test                    # experiment: saves models/ppo_flip_test.zip, main model untouched
+python -m ppo.train_ppo task=flip init_model=models/ppo_flip.zip steps=500000 env.reward.speed=0.3
+                                                                        # fine-tune: continue from a saved model with changed settings
+```
+
+Fine-tuning is useful when a reward change only needs to polish existing behaviour (e.g. remove a small oscillation): it takes minutes instead of a full run, and it can work where training from scratch with the same reward fails.
+
 ## Usage
 
 ```bash
