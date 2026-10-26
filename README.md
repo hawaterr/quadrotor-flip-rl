@@ -27,9 +27,12 @@ Final models, evaluated on 5 starts from rest (`envs/evaluation.py`):
 | Crashes | 0/5 | 0/5 | 0/5 |
 | Env steps to first reach return 150 | 475k | 20k | 30k |
 | Training steps / wall-clock time | 1M / 21 min | 60k / 71 min | (same run) |
+| Model size (trained parameters) | 40k | 331k | (same model) |
 | Inference time per step, median (p99) | 0.2 ms (0.6 ms) | 18 ms (25 ms) | 0.5 ms (1.4 ms) |
 
 TD-MPC2 learns the flip with about 20× fewer env steps, but its evaluation return swings a lot from one evaluation to the next (e.g. 10 at 47.5k steps, 190 at 52.5k), and the final 60k model happens to sit in a dip with MPPI. PPO needs far more env steps but less wall-clock time, and ends steadier: it hovers back at the start point.
+
+Model size: PPO is two separate `[128, 128]` MLPs, an actor (20k parameters) and a critic (20k). TD-MPC2 is a whole world model with the same 128 hidden width: encoder, latent dynamics, reward, termination and policy heads, and an ensemble of 5 Q networks (194k of the 331k). Acting without planning uses only the encoder and the policy head (38k).
 
 Inference time is the wall-clock time to compute one action from one observation, on a laptop CPU (Intel i7-1065G7, PyTorch CPU build, batch size 1), printed by `animate_rollout.py`. The control period is 20 ms, so the policies alone (PPO, TD-MPC2 without planning) run about 40× faster than real time, while MPPI (4 iterations × 256 samples over a 3-step horizon) takes most of the budget and sometimes exceeds it: it would need a smaller planner or faster hardware to fly in real time.
 
