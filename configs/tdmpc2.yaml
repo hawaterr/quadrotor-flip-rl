@@ -18,9 +18,9 @@ log_every_steps: 1000     # TensorBoard losses
 
 agent:
   # model
-  latent_dim: 128
-  mlp_dim: 256
-  enc_dim: 256
+  latent_dim: 64          # size of z; a multiple of simnorm_dim
+  mlp_dim: 128            # hidden layer width of all networks except the encoder (sets most of the cost)
+  enc_dim: 128            # hidden layer width of the encoder
   num_q: 5                # Q-function ensemble size
   simnorm_dim: 8          # SimNorm group size
   num_bins: 101           # two-hot bins for reward and value

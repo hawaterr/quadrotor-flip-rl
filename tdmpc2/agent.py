@@ -5,6 +5,7 @@ consistency loss, discrete (two-hot, symlog) regression for reward and value, a 
 and MPPI planning in latent space. Dropped: everything multi-task (task embeddings, action masks).
 Added: a termination head, since QuadEnv ends episodes on a crash (the original assumes fixed-length episodes).
 """
+import copy
 import os
 
 import numpy as np
@@ -89,6 +90,37 @@ def mlp(in_dim, hidden, out_dim, out_act=None, dropout=0.0):
     return nn.Sequential(*layers)
 
 
+class EnsembleMLP(nn.Module):
+    """n independent copies of mlp(in_dim, hidden, out_dim, dropout=dropout), computed in one batched matrix
+    multiply per layer (torch.baddbmm) instead of a Python loop over n networks. Same maths and initialisation
+    as n separate mlp()s, much less overhead. Output shape: (n, *leading dims of the input, out_dim), or
+    (len(idx), ...) when idx selects some of the copies (only those are computed)."""
+
+    def __init__(self, n, in_dim, hidden, out_dim, dropout=0.0):
+        super().__init__()
+        dims = [in_dim, *hidden, out_dim]
+        self.weights, self.biases = nn.ParameterList(), nn.ParameterList()
+        for d_in, d_out in zip(dims[:-1], dims[1:]):
+            layers = [nn.Linear(d_in, d_out) for _ in range(n)]  # nn.Linear's initialisation, per copy
+            self.weights.append(nn.Parameter(torch.stack([l.weight.T for l in layers]).detach()))  # (n, in, out)
+            self.biases.append(nn.Parameter(torch.stack([l.bias for l in layers]).unsqueeze(1).detach()))  # (n, 1, out)
+        self.norm_w = nn.ParameterList([nn.Parameter(torch.ones(n, 1, h)) for h in hidden])  # LayerNorm affine
+        self.norm_b = nn.ParameterList([nn.Parameter(torch.zeros(n, 1, h)) for h in hidden])
+        self.dropout = dropout
+
+    def forward(self, x, idx=None):
+        pick = (lambda p: p) if idx is None else (lambda p: p[idx])
+        lead = x.shape[:-1]
+        x = x.reshape(1, -1, x.shape[-1]).expand(pick(self.weights[0]).shape[0], -1, -1)  # same input to every copy
+        for i, (w, b) in enumerate(zip(self.weights, self.biases)):
+            x = torch.baddbmm(pick(b), x, pick(w))
+            if i < len(self.norm_w):  # hidden layer: (dropout) -> LayerNorm -> SiLU, as in mlp()
+                if self.dropout and i == 0:
+                    x = F.dropout(x, self.dropout, self.training)
+                x = F.silu(F.layer_norm(x, x.shape[-1:]) * pick(self.norm_w[i]) + pick(self.norm_b[i]))
+        return x.reshape(x.shape[0], *lead, x.shape[-1])
+
+
 class RunningScale:
     """Running estimate of the 5-95 percentile range of Q, used to normalise the policy loss."""
 
@@ -115,13 +147,12 @@ class WorldModel(nn.Module): # holds all the networks
         self.reward = mlp(z + a, h, cfg.num_bins) # r_hat() in paper
         self.termination = mlp(z, h, 1)  # logit that the episode ended on arriving at z (not in paper)
         self.pi = mlp(z, h, 2 * a) # p() in paper
-        self.qs = nn.ModuleList([mlp(z + a, h, cfg.num_bins, dropout=cfg.dropout) for _ in range(cfg.num_q)]) # 5 Qs in paper
+        self.qs = EnsembleMLP(cfg.num_q, z + a, h, cfg.num_bins, dropout=cfg.dropout) # 5 Qs in paper, computed together
         # Zero-init reward and Q outputs: predictions start at 0 instead of random
-        for head in [self.reward, *self.qs]:
-            nn.init.zeros_(head[-1].weight)
-            nn.init.zeros_(head[-1].bias)
-        self.target_qs = nn.ModuleList([mlp(z + a, h, cfg.num_bins, dropout=cfg.dropout) for _ in range(cfg.num_q)]) # 5 Qs_bar in paper
-        self.target_qs.load_state_dict(self.qs.state_dict())
+        for weight, bias in [(self.reward[-1].weight, self.reward[-1].bias), (self.qs.weights[-1], self.qs.biases[-1])]:
+            nn.init.zeros_(weight)
+            nn.init.zeros_(bias)
+        self.target_qs = copy.deepcopy(self.qs) # 5 Qs_bar in paper
         self.target_qs.requires_grad_(False)
 
     def next(self, z, a):
@@ -141,12 +172,11 @@ class WorldModel(nn.Module): # holds all the networks
 
     def q(self, z, a, two_hot, mode="min", target=False):
         """mode="all": logits of every head; "min"/"avg": min/mean value of two random heads."""
-        za = torch.cat([z, a], -1)
-        heads = self.target_qs if target else self.qs
+        qs, za = (self.target_qs if target else self.qs), torch.cat([z, a], -1)
         if mode == "all":
-            return torch.stack([q(za) for q in heads])
-        i, j = np.random.choice(len(heads), 2, replace=False)
-        q1, q2 = two_hot.decode(heads[i](za)), two_hot.decode(heads[j](za))
+            return qs(za)  # (num_q, ..., bins), all heads in one batched call
+        idx = torch.as_tensor(np.random.choice(self.cfg.num_q, 2, replace=False))
+        q1, q2 = two_hot.decode(qs(za, idx))  # only the two picked heads are computed
         return torch.min(q1, q2) if mode == "min" else (q1 + q2) / 2
 
 
