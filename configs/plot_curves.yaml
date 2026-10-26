@@ -1,8 +1,9 @@
 # plot_curves.py: learning curves of the benchmark runs. Override on the command line, e.g.
 #   python plot_curves.py out=plots/test.png
 
-runs:                         # legend label: evaluation log written during training (results/<model name>.csv)
-  PPO: results/ppo_flip.csv
-  TD-MPC2: results/tdmpc2_flip.csv
+curves:                       # legend label: evaluation log written during training, and its column
+  PPO: {file: results/ppo_flip.csv, column: return}
+  TD-MPC2 (MPPI): {file: results/tdmpc2_flip.csv, column: return}
+  TD-MPC2 (no plan): {file: results/tdmpc2_flip.csv, column: policy_return}  # same run, policy prior alone
 log_x: true                   # log-scale env steps: PPO trains for ~1M steps, TD-MPC2 for ~60k
 out: docs/learning_curves.png

@@ -6,29 +6,33 @@ Teaching a simulated quadrotor to do a flip with reinforcement learning: one rol
 
 ## Results
 
-One training run each, from scratch, with the same reward and the same control period (0.02 s per env step).
+One training run each, from scratch, with the same reward and the same control period (0.02 s per env step). TD-MPC2 is shown twice: acting with MPPI planning (the actual algorithm), and with its learned policy alone (no planning, same model).
 
 <table>
-  <tr><th>PPO</th><th>TD-MPC2</th></tr>
+  <tr><th>PPO</th><th>TD-MPC2 (MPPI)</th><th>TD-MPC2 (no plan)</th></tr>
   <tr>
     <td><img src="docs/ppo_flip.gif" alt="PPO: flip, fly back to the start point and hover"></td>
-    <td><img src="docs/tdmpc2_flip.gif" alt="TD-MPC2: flip, fly back towards the start point and hover"></td>
+    <td><img src="docs/tdmpc2_flip.gif" alt="TD-MPC2 with MPPI: flip, then drift near the start point"></td>
+    <td><img src="docs/tdmpc2_flip_no_plan.gif" alt="TD-MPC2 policy alone: flip, fly back towards the start point and hover"></td>
   </tr>
 </table>
 
 ![Evaluation return vs env steps](docs/learning_curves.png)
 
-Evaluated on 5 starts from rest (`envs/evaluation.py`).
+Final models, evaluated on 5 starts from rest (`envs/evaluation.py`):
 
-| | PPO | TD-MPC2 |
-|---|---|---|
-| Final distance to start point | 0.07 m | pending (see below) |
-| Speed, last 0.5 s | 0.001 m/s | |
-| Training steps / wall-clock time | 1M / 22 min | |
+| | PPO | TD-MPC2 (MPPI) | TD-MPC2 (no plan) |
+|---|---|---|---|
+| Return | 203 | 94 | 165 |
+| Final distance to start point | 0.07 m | 0.55 m | 0.32 m |
+| Speed, last 0.5 s | 0.001 m/s | 1.5 m/s | 0.09 m/s |
+| Crashes | 0/5 | 0/5 | 0/5 |
+| Env steps to first reach return 150 | 475k | 20k | 30k |
+| Training steps / wall-clock time | 1M / 21 min | 60k / 71 min | (same run) |
 
-The TD-MPC2 GIF is the current agent, trained before the latest reward change (`thrust_effort`) and without evaluation logging, so it has no curve yet. Its benchmark run comes after the training speed-up (`TDMPC2_SPEEDUP.md`).
+TD-MPC2 learns the flip with about 20× fewer env steps, but its evaluation return swings a lot from one evaluation to the next (e.g. 10 at 47.5k steps, 190 at 52.5k), and the final 60k model happens to sit in a dip with MPPI. PPO needs far more env steps but less wall-clock time, and ends steadier: it hovers back at the start point.
 
-Regenerate: `python animate_rollout.py policy=ppo_flip save=docs/ppo_flip.gif` (same for `tdmpc2_flip`) and `python plot_curves.py`.
+Regenerate: `python animate_rollout.py policy=ppo_flip save=docs/ppo_flip.gif` (same for `tdmpc2_flip`, plus `plan=false save=docs/tdmpc2_flip_no_plan.gif`) and `python plot_curves.py`.
 
 ## Files
 
@@ -40,7 +44,7 @@ envs/                   simulator and Gym env, shared by both algorithms
 ppo/
   train_ppo.py          train PPO
 tdmpc2/
-  agent.py              minimal single-task TD-MPC2 (world model, MPPI planner, ~1M params), CPU friendly
+  agent.py              minimal single-task TD-MPC2 (world model, MPPI planner, 0.33M params), CPU friendly
   train_tdmpc2.py       train TD-MPC2
 animate_rollout.py      run one episode of any policy and animate it
 plot_curves.py          plot the learning curves (results/*.csv) to docs/learning_curves.png
@@ -102,7 +106,7 @@ python -m ppo.train_ppo task=flip env.reward.smooth=0.3     # an experiment: any
 tensorboard --logdir runs
 
 # TD-MPC2: train hover / flip; saves models/tdmpc2_<task>.pt
-# MPPI size and the rest are in configs/tdmpc2.yaml (about 10 steps/s on a laptop CPU).
+# MPPI size and the rest are in configs/tdmpc2.yaml (about 14 steps/s on a laptop CPU).
 python -m tdmpc2.train_tdmpc2 task=flip
 
 # learning curves: evaluation return vs env steps, from the logs both trainers write

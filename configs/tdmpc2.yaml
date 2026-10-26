@@ -7,7 +7,8 @@ train_seed: 0             # seed of the training run (network init, exploration,
 
 steps: 100000             # env steps to train for
 save_every: 5000          # env steps between checkpoints (models/tdmpc2_<task>.pt), to check progress mid-run
-eval_every: 2500          # env steps between evaluations (with MPPI), logged to results/tdmpc2_<task>.csv
+eval_every: 2500          # env steps between evaluations, with MPPI and with the policy alone (columns
+                          #   return / policy_return ...), logged to results/tdmpc2_<task>.csv
 eval_seeds: [0, 1, 2, 3, 4]  # one evaluation episode per seed (start from rest)
 threads: 4                # torch CPU threads
 plan_after: 0             # act with the policy prior (fast) until this step, then with MPPI

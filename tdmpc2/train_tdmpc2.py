@@ -104,8 +104,11 @@ def train(cfg):
                 save()
                 print(f"checkpoint saved at step {step}")
             if step % cfg.eval_every == 0:
-                act = lambda o, t: agent.act(o, t0=t == 0, eval_mode=True)  # with MPPI, the actual algorithm
-                eval_log.write(step, time.time() - tic, evaluate_policy(eval_env, act, cfg.eval_seeds))
+                # With MPPI (the actual algorithm) and with the learned policy alone (no planning)
+                mppi = evaluate_policy(eval_env, lambda o, t: agent.act(o, t0=t == 0, eval_mode=True), cfg.eval_seeds)
+                policy = evaluate_policy(eval_env, lambda o, t: agent.act(o, t0=t == 0, eval_mode=True, plan=False),
+                                         cfg.eval_seeds)
+                eval_log.write(step, time.time() - tic, {**mppi, **{f"policy_{k}": v for k, v in policy.items()}})
                 t0 = True  # evaluation used the MPPI warm start; restart it for the training episode
     except KeyboardInterrupt:
         print(f"\ninterrupted at {step} steps, saving what we have")
