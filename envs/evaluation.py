@@ -10,18 +10,13 @@ import numpy as np
 import torch
 
 SETTLE_WINDOW = 0.5  # s at the end of an episode over which "holding still at the target" is measured
-SUCCESS_DIST = 0.3   # m from the target at the end
-SUCCESS_SPEED = 0.2  # m/s, mean over the last SETTLE_WINDOW
-SUCCESS_UPRIGHT = 0.95  # R[2,2] at the end
 
 
 def evaluate(env, act, seeds):
     """Run one episode per seed on `env` (a QuadEnv built with training=False) with act(obs, t) -> action, and
     return the mean metrics.
 
-    Starts use the training reset (small v/w noise, so each seed differs) without the mid-roll curriculum.
-    Success: flip done (flip task), no crash, back within SUCCESS_DIST, slower than SUCCESS_SPEED over the last
-    SETTLE_WINDOW, and upright."""
+    Starts use the training reset (small v/w noise, so each seed differs) without the mid-roll curriculum."""
     tail = max(1, round(SETTLE_WINDOW / env.policy_dt))
     rows = []
     np_state, torch_state = np.random.get_state(), torch.get_rng_state()  # restored below: called mid-training
@@ -37,10 +32,7 @@ def evaluate(env, act, seeds):
             speed.append(np.linalg.norm(env.quad.v))
             if term or trunc:
                 break
-        flipped = info["flip_done"] or env.task != "flip"
-        success = (flipped and not term and dist[-1] < SUCCESS_DIST
-                   and np.mean(speed[-tail:]) < SUCCESS_SPEED and env.quad.R[2, 2] > SUCCESS_UPRIGHT)
-        rows.append({"return": total, "success": float(success), "final_dist": dist[-1],
+        rows.append({"return": total, "final_dist": dist[-1],
                      "settle_speed": float(np.mean(speed[-tail:])), "crashed": float(term)})
     np.random.set_state(np_state)
     torch.set_rng_state(torch_state)
@@ -63,5 +55,4 @@ class EvalLog:
             self.writer.writeheader()
         self.writer.writerow(row)
         self.file.flush()  # readable (e.g. by plot_curves.py) while training continues
-        print(f"eval at step {step}: return {metrics['return']:.1f}  success {metrics['success']:.0%}  "
-              f"final dist {metrics['final_dist']:.2f} m")
+        print(f"eval at step {step}: return {metrics['return']:.1f}  final dist {metrics['final_dist']:.2f} m")

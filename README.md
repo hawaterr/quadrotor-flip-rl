@@ -16,16 +16,14 @@ One training run each, from scratch, with the same reward and the same control p
   </tr>
 </table>
 
-![Evaluation return and success rate vs env steps](docs/learning_curves.png)
+![Evaluation return vs env steps](docs/learning_curves.png)
 
-Evaluated on 5 starts from rest (`envs/evaluation.py`). Success means: flip done, no crash, back within 0.3 m of the start point, slower than 0.2 m/s over the last 0.5 s, and upright.
+Evaluated on 5 starts from rest (`envs/evaluation.py`).
 
 | | PPO | TD-MPC2 |
 |---|---|---|
-| Success | 5/5 | pending (see below) |
-| Final distance to start point | 0.07 m | |
+| Final distance to start point | 0.07 m | pending (see below) |
 | Speed, last 0.5 s | 0.001 m/s | |
-| Env steps to first success | 500k | |
 | Training steps / wall-clock time | 1M / 22 min | |
 
 The TD-MPC2 GIF is the current agent, trained before the latest reward change (`thrust_effort`) and without evaluation logging, so it has no curve yet. Its benchmark run comes after the training speed-up (`TDMPC2_SPEEDUP.md`).
@@ -107,7 +105,7 @@ tensorboard --logdir runs
 # MPPI size and the rest are in configs/tdmpc2.yaml (about 10 steps/s on a laptop CPU).
 python -m tdmpc2.train_tdmpc2 task=flip
 
-# learning curves: evaluation return and success rate vs env steps, from the logs both trainers write
+# learning curves: evaluation return vs env steps, from the logs both trainers write
 python plot_curves.py
 
 # watch a model: policy is zero, hover, random, scripted_hover, scripted_flip, or any model in models/ (ppo_*, tdmpc2_*)

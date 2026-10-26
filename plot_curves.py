@@ -1,4 +1,4 @@
-"""Plot the benchmark learning curves: evaluation return and success rate vs env steps, one line per algorithm.
+"""Plot the benchmark learning curves: evaluation return vs env steps, one line per algorithm.
 
 Reads the evaluation logs the trainers write during training (results/<model name>.csv, every eval_every
 steps). Settings: configs/plot_curves.yaml; override any of them as key=value.
@@ -36,30 +36,25 @@ def main():
 
     plt.rcParams.update({"font.size": 10, "text.color": TEXT, "axes.labelcolor": TEXT_2,
                          "xtick.color": TEXT_2, "ytick.color": TEXT_2, "axes.edgecolor": GRID})
-    fig, (ax_r, ax_s) = plt.subplots(1, 2, figsize=(10, 3.8), facecolor=SURFACE)
-    for ax, key, title in ((ax_r, "return", "Evaluation return"), (ax_s, "success", "Success rate")):
-        ax.set_facecolor(SURFACE)
-        for (label, log), color in zip(logs.items(), SERIES):
-            y = [v * 100 for v in log[key]] if key == "success" else log[key]
-            ax.plot(log["step"], y, color=color, lw=2, label=label)
-            # direct label at the end of each line (identity isn't colour alone; the legend repeats it)
-            ax.annotate(label, (log["step"][-1], y[-1]), xytext=(4, 0), textcoords="offset points",
-                        va="center", fontsize=9, color=TEXT)
-        ax.set_title(title, loc="left", fontsize=11, color=TEXT)
-        ax.set_xlabel("env steps (0.02 s each)")
-        if cfg.log_x:
-            ax.set_xscale("symlog", linthresh=1e3)  # symlog: the first evaluation is at step 0
-            top = max(max(log["step"]) for log in logs.values())
-            ax.set_xticks([0] + [10 ** k for k in range(3, 8) if 10 ** k <= top])
-            ax.xaxis.set_minor_locator(matplotlib.ticker.NullLocator())
-        ax.grid(True, color=GRID, lw=0.8)
-        ax.spines[["top", "right"]].set_visible(False)
-    ax_s.set_ylabel("% of evaluation starts")
-    ax_s.set_ylim(-5, 105)
-    ax_r.set_ylabel("return (mean over starts)")
-    handles, labels = ax_r.get_legend_handles_labels()
-    fig.legend(handles, labels, frameon=False, loc="upper center", ncol=len(labels))
-    fig.tight_layout(rect=(0, 0, 1, 0.93))
+    fig, ax = plt.subplots(figsize=(7, 4.2), facecolor=SURFACE)
+    ax.set_facecolor(SURFACE)
+    for (label, log), color in zip(logs.items(), SERIES):
+        ax.plot(log["step"], log["return"], color=color, lw=2, label=label)
+        # direct label at the end of each line (identity isn't colour alone; the legend repeats it)
+        ax.annotate(label, (log["step"][-1], log["return"][-1]), xytext=(4, 0), textcoords="offset points",
+                    va="center", fontsize=9, color=TEXT)
+    ax.set_title("Evaluation return", loc="left", fontsize=11, color=TEXT)
+    ax.set_xlabel("env steps (0.02 s each)")
+    ax.set_ylabel("return (mean over starts)")
+    if cfg.log_x:
+        ax.set_xscale("symlog", linthresh=1e3)  # symlog: the first evaluation is at step 0
+        top = max(max(log["step"]) for log in logs.values())
+        ax.set_xticks([0] + [10 ** k for k in range(3, 8) if 10 ** k <= top])
+        ax.xaxis.set_minor_locator(matplotlib.ticker.NullLocator())
+    ax.grid(True, color=GRID, lw=0.8)
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.legend(frameon=False, loc="upper left", fontsize=9)
+    fig.tight_layout()
     os.makedirs(os.path.dirname(cfg.out) or ".", exist_ok=True)
     fig.savefig(cfg.out, dpi=150, facecolor=SURFACE)
     print(f"saved {cfg.out}")
