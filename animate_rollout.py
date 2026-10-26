@@ -16,6 +16,7 @@ Settings: configs/animate_rollout.yaml; override any of them as key=value.
     python animate_rollout.py save=plots/hover.gif      # also save the animation
 """
 import os
+import time
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -126,8 +127,12 @@ def rollout(env, policy, seed):
 
     record()
     action_change = []  # sum over the 4 commands of |a - previous a|; large = chattering
+    infer_ms = []  # wall-clock time of each policy call (one action from one observation)
     for t in range(env.max_steps):
-        action = np.clip(policy(obs, t), -1, 1)
+        start = time.perf_counter()
+        action = policy(obs, t)
+        infer_ms.append(1000 * (time.perf_counter() - start))
+        action = np.clip(action, -1, 1)
         action_change.append(np.abs(action - env.prev_action).sum())
         thrust_cmd, rate_cmd = env._scale_action(action)
         log["thrust_cmd"].append(env.quad.m * thrust_cmd)
@@ -147,6 +152,10 @@ def rollout(env, policy, seed):
     tail = max(1, round(SETTLE_WINDOW / env.policy_dt))
     print(f"last {SETTLE_WINDOW} s: mean dist={np.mean(log['dist'][-tail:]):.3f}  "
           f"mean speed={np.mean(log['speed'][-tail:]):.2f}  final speed={log['speed'][-1]:.2f}")
+    # The first call is excluded: it includes one-off warm-up (lazy init, memory allocation)
+    steady = np.array(infer_ms[1:] or infer_ms)
+    print(f"inference time per step: median={np.median(steady):.2f} ms  p99={np.percentile(steady, 99):.2f} ms  "
+          f"first call={infer_ms[0]:.1f} ms  (control period {1000 * env.policy_dt:.0f} ms)")
     return log
 
 
