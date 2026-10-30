@@ -14,6 +14,7 @@ Settings: configs/animate_rollout.yaml; override any of them as key=value.
     python animate_rollout.py policy=tdmpc2_flip plan=false    # same agent, policy prior only (no MPPI)
     python animate_rollout.py policy=ppo_flip_v1        # any model file in models/ named ppo_* or tdmpc2_*
     python animate_rollout.py save=plots/hover.gif      # also save the animation
+    python animate_rollout.py plots=false               # 3D view alone (no plots or text), as in the README
 """
 import os
 import time
@@ -159,19 +160,28 @@ def rollout(env, policy, seed):
     return log
 
 
-def animate(log, policy_dt, save=None, start_pause=0.0):
-    """start_pause: seconds to hold the first frame (t = 0) before playing."""
+def animate(log, policy_dt, save=None, start_pause=0.0, plots=True):
+    """start_pause: seconds to hold the first frame (t = 0) before playing.
+    plots: False draws the 3D view alone, with no plots, status text or axis labels."""
     P = np.array(log["p"])
     # Arm tips in body frame (X configuration) and the body "up" axis
     arms = ARM * np.array([[1, 1, 0], [-1, -1, 0], [1, -1, 0], [-1, 1, 0]]) / np.sqrt(2)
 
-    fig = plt.figure(figsize=(9, 11))
-    gs = fig.add_gridspec(5, 2, height_ratios=[4, 1, 1, 1, 1], hspace=0.25, wspace=0.3)
-    ax = fig.add_subplot(gs[0, :], projection="3d")
+    if plots:
+        fig = plt.figure(figsize=(9, 11))
+        gs = fig.add_gridspec(5, 2, height_ratios=[4, 1, 1, 1, 1], hspace=0.25, wspace=0.3)
+        ax = fig.add_subplot(gs[0, :], projection="3d")
+    else:
+        fig = plt.figure(figsize=(5, 5))
+        ax = fig.add_axes([0, 0, 1, 1], projection="3d")
     c, half = P.mean(0), max(np.ptp(P, 0).max() / 2 + 0.5, 1.0)
     ax.set_xlim(c[0] - half, c[0] + half); ax.set_ylim(c[1] - half, c[1] + half)
     ax.set_zlim(max(0, c[2] - half), c[2] + half)
-    ax.set_xlabel("x"); ax.set_ylabel("y"); ax.set_zlabel("z")
+    if plots:
+        ax.set_xlabel("x"); ax.set_ylabel("y"); ax.set_zlabel("z")
+    else:
+        # Keep the grid for depth, drop the numbers
+        ax.set_xticklabels([]); ax.set_yticklabels([]); ax.set_zticklabels([])
 
     arm1, = ax.plot([], [], [], "k-", lw=3)
     arm2, = ax.plot([], [], [], "k-", lw=3)
@@ -196,11 +206,13 @@ def animate(log, policy_dt, save=None, start_pause=0.0):
     series["angle"] = np.degrees(np.unwrap(euler, axis=0))
     # (grid cell, y label, colour, [(series, column, style, legend label)])
     series["z"] = P[:, 2]
-    panels = [(gs[1, 0], "thrust [N]", "b", [("thrust_cmd", None, "--", "cmd"), ("thrust", None, "-", "actual")]),
-              (gs[1, 1], "height z [m]", "k", [("z", None, "-", None)])]
-    for k, (name, col) in enumerate(zip(("roll", "pitch", "yaw"), ("C3", "C2", "C0"))):
-        panels += [(gs[k + 2, 0], f"{name} rate [rad/s]", col, [("rate_cmd", k, "--", "cmd"), ("w", k, "-", "actual")]),
-                   (gs[k + 2, 1], f"{name} [deg]", col, [("angle", k, "-", None)])]
+    panels = []
+    if plots:
+        panels = [(gs[1, 0], "thrust [N]", "b", [("thrust_cmd", None, "--", "cmd"), ("thrust", None, "-", "actual")]),
+                  (gs[1, 1], "height z [m]", "k", [("z", None, "-", None)])]
+        for k, (name, col) in enumerate(zip(("roll", "pitch", "yaw"), ("C3", "C2", "C0"))):
+            panels += [(gs[k + 2, 0], f"{name} rate [rad/s]", col, [("rate_cmd", k, "--", "cmd"), ("w", k, "-", "actual")]),
+                       (gs[k + 2, 1], f"{name} [deg]", col, [("angle", k, "-", None)])]
     lines = []  # (line, series name, column or None)
     for cell, ylabel, col, curves in panels:
         a = fig.add_subplot(cell)
@@ -236,9 +248,10 @@ def animate(log, policy_dt, save=None, start_pause=0.0):
         arrow.set_data_3d(*np.array([p, p + d]).T)
 
         trail.set_data_3d(*P[: i + 1].T)
-        flip = f"  revs={log['revs'][i]:.2f}  flip_done={log['done'][i]}" if log["task"] == "flip" else ""
-        text.set_text(f"t={i * policy_dt:.2f}s  dist to target={log['dist'][i]:.2f} m{flip}\n"
-                      f"thrust={F:.1f} N ({F / hover_force:.2f}x hover)  reward={log['r'][i]:.1f}")
+        if plots:
+            flip = f"  revs={log['revs'][i]:.2f}  flip_done={log['done'][i]}" if log["task"] == "flip" else ""
+            text.set_text(f"t={i * policy_dt:.2f}s  dist to target={log['dist'][i]:.2f} m{flip}\n"
+                          f"thrust={F:.1f} N ({F / hover_force:.2f}x hover)  reward={log['r'][i]:.1f}")
         for line, key, col in lines:
             y = series[key][: i + 1]
             line.set_data(T[: i + 1], y if col is None else y[:, col])
@@ -262,4 +275,4 @@ if __name__ == "__main__":
                          f"got {cfg.policy!r}")
     env = QuadEnv(cfg=env_config_for(cfg.policy))
     log = rollout(env, make_policy(cfg.policy, env, plan=cfg.plan, scripted=cfg.scripted), cfg.seed)
-    animate(log, env.policy_dt, cfg.save, cfg.start_pause)
+    animate(log, env.policy_dt, cfg.save, cfg.start_pause, cfg.plots)

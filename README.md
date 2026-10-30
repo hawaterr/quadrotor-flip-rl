@@ -6,17 +6,14 @@ Teaching a simulated quadrotor to do a flip with reinforcement learning: one rol
 
 TD-MPC2 is shown twice: acting with MPPI planning (the actual algorithm), and with its learned policy alone (no planning, same model).
 
-**TD-MPC2 (MPPI)**
-
-![TD-MPC2 with MPPI: flip, then drift near the start point](docs/tdmpc2_flip.gif)
-
-**TD-MPC2 (no plan)**
-
-![TD-MPC2 policy alone: flip, fly back towards the start point and hover](docs/tdmpc2_flip_no_plan.gif)
-
-**PPO**
-
-![PPO: flip, fly back to the start point and hover](docs/ppo_flip.gif)
+<table>
+  <tr><th>PPO</th><th>TD-MPC2 (MPPI)</th><th>TD-MPC2 (no plan)</th></tr>
+  <tr>
+    <td><img src="docs/ppo_flip.gif" alt="PPO: flip, fly back to the start point and hover"></td>
+    <td><img src="docs/tdmpc2_flip.gif" alt="TD-MPC2 with MPPI: flip, then drift near the start point"></td>
+    <td><img src="docs/tdmpc2_flip_no_plan.gif" alt="TD-MPC2 policy alone: flip, fly back towards the start point and hover"></td>
+  </tr>
+</table>
 
 ![Evaluation return vs env steps](docs/learning_curves.png)
 
@@ -37,7 +34,7 @@ TD-MPC2 learns the flip with about 20× fewer env steps, but its evaluation retu
 
 Inference time is the wall-clock time to compute one action from one observation, on a laptop CPU (Intel i7-1065G7, PyTorch CPU build, batch size 1).
 
-Regenerate: `python animate_rollout.py policy=ppo_flip save=docs/ppo_flip.gif` (same for `tdmpc2_flip`, plus `plan=false save=docs/tdmpc2_flip_no_plan.gif`) and `python plot_curves.py`.
+Regenerate: `python animate_rollout.py policy=ppo_flip plots=false save=docs/ppo_flip.gif` (same for `tdmpc2_flip`, plus `plan=false save=docs/tdmpc2_flip_no_plan.gif`; drop `plots=false` to also see the command and attitude plots) and `python plot_curves.py`.
 
 ## Setup
 

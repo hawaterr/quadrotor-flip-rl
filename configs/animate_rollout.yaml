@@ -6,6 +6,7 @@ seed: 0                   # seed of the episode's starting state
 save: null                # e.g. plots/hover.gif to also save the animation
 plan: true                # tdmpc2_*: false acts with the policy prior alone, without MPPI
 start_pause: 0.7          # s to hold the first frame (t = 0), so the starting position is easy to see
+plots: true               # false: 3D view alone, without the plots, status text and axis numbers
 
 # Hand-written baseline controllers (scripted_hover / scripted_flip)
 scripted:
