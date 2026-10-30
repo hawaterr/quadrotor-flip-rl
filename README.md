@@ -4,7 +4,7 @@ Teaching a simulated quadrotor to do a flip with reinforcement learning: one rol
 
 ## Results
 
-One training run each, from scratch, with the same reward and the same control period (0.02 s per env step). TD-MPC2 is shown twice: acting with MPPI planning (the actual algorithm), and with its learned policy alone (no planning, same model).
+TD-MPC2 is shown twice: acting with MPPI planning (the actual algorithm), and with its learned policy alone (no planning, same model).
 
 <table>
   <tr><th>PPO</th><th>TD-MPC2 (MPPI)</th><th>TD-MPC2 (no plan)</th></tr>
@@ -17,7 +17,7 @@ One training run each, from scratch, with the same reward and the same control p
 
 ![Evaluation return vs env steps](docs/learning_curves.png)
 
-Final models, evaluated on 5 starts from rest (`envs/evaluation.py`):
+
 
 | | PPO | TD-MPC2 (MPPI) | TD-MPC2 (no plan) |
 |---|---|---|---|
@@ -30,34 +30,11 @@ Final models, evaluated on 5 starts from rest (`envs/evaluation.py`):
 | Model size (trained parameters) | 40k | 331k | (same model) |
 | Inference time per step, median (p99) | 0.2 ms (0.6 ms) | 18 ms (25 ms) | 0.5 ms (1.4 ms) |
 
-TD-MPC2 learns the flip with about 20× fewer env steps, but its evaluation return swings a lot from one evaluation to the next (e.g. 10 at 47.5k steps, 190 at 52.5k), and the final 60k model happens to sit in a dip with MPPI. PPO needs far more env steps but less wall-clock time, and ends steadier: it hovers back at the start point.
+TD-MPC2 learns the flip with about 20× fewer env steps, but its evaluation return swings a lot from one evaluation to the next. PPO needs far more env steps but less wall-clock time, and ends steadier: it hovers back at the start point.
 
-Model size: PPO is two separate `[128, 128]` MLPs, an actor (20k parameters) and a critic (20k). TD-MPC2 is a whole world model with the same 128 hidden width: encoder, latent dynamics, reward, termination and policy heads, and an ensemble of 5 Q networks (194k of the 331k). Acting without planning uses only the encoder and the policy head (38k).
-
-Inference time is the wall-clock time to compute one action from one observation, on a laptop CPU (Intel i7-1065G7, PyTorch CPU build, batch size 1), printed by `animate_rollout.py`. The control period is 20 ms, so the policies alone (PPO, TD-MPC2 without planning) run about 40× faster than real time, while MPPI (4 iterations × 256 samples over a 3-step horizon) takes most of the budget and sometimes exceeds it: it would need a smaller planner or faster hardware to fly in real time.
+Inference time is the wall-clock time to compute one action from one observation, on a laptop CPU (Intel i7-1065G7, PyTorch CPU build, batch size 1).
 
 Regenerate: `python animate_rollout.py policy=ppo_flip save=docs/ppo_flip.gif` (same for `tdmpc2_flip`, plus `plan=false save=docs/tdmpc2_flip_no_plan.gif`) and `python plot_curves.py`.
-
-## Files
-
-```
-envs/                   simulator and Gym env, shared by both algorithms
-  quadrotor.py          quadrotor dynamics
-  quad_env.py           Gymnasium environment, task="hover" or task="flip"
-  evaluation.py         evaluate a policy over fixed starts; logs the learning curve during training
-ppo/
-  train_ppo.py          train PPO
-tdmpc2/
-  agent.py              minimal single-task TD-MPC2 (world model, MPPI planner, 0.33M params), CPU friendly
-  train_tdmpc2.py       train TD-MPC2
-animate_rollout.py      run one episode of any policy and animate it
-plot_curves.py          plot the learning curves (results/*.csv) to docs/learning_curves.png
-configs/                every tunable number: env.yaml, ppo.yaml, tdmpc2.yaml, ... (see Configuration)
-results/  docs/         learning-curve logs and README figures (tracked by git)
-models/  plots/  runs/  outputs: trained models, plots, TensorBoard logs (not tracked by git)
-```
-
-Run every command from the repo root.
 
 ## Setup
 
@@ -74,12 +51,6 @@ pip install -r requirements.txt
 python -c "import gymnasium, stable_baselines3, torch, matplotlib; print('ok', torch.__version__)"
 ```
 
-## Configuration
-
-All settings live in YAML files in `configs/`, not in the code. Each script loads them with one function (`configs.load_config`) into a single config, and any value can be overridden on the command line as `key=value`, the same style as the official TD-MPC2 (Hydra):
-
-Every model is saved with the full config it was trained with (`models/ppo_<task>.yaml`, inside `models/tdmpc2_<task>.pt`), so evaluation and `animate_rollout.py` rebuild the same environment even after you edit the YAML.
-
 ## Checkpoints and fine-tuning
 
 Training saves the model every `save_every` env steps (`configs/ppo.yaml`: 100k, `configs/tdmpc2.yaml`: 5k), not only at the end or on Ctrl-C. It writes the usual model file, so you can check progress while training continues, with the usual commands:
@@ -89,14 +60,12 @@ python animate_rollout.py policy=tdmpc2_flip plan=false     # latest checkpoint 
 python plot_curves.py                                       # learning curves so far (results/ is written every eval_every steps)
 ```
 
-Because checkpoints overwrite the model file, a new run replaces your current model, early (bad) checkpoints first. For PPO:
+Fine tuning an existing model is supported for PPO:
 
 ```bash
 python -m ppo.train_ppo task=flip name=ppo_flip_test # experiment: saves models/ppo_flip_test.zip, main model untouched
 python -m ppo.train_ppo task=flip init_model=models/ppo_flip.zip steps=500000 env.reward.speed=0.3 # fine-tune: continue from a saved model with changed settings
 ```
-
-Fine-tuning is useful when a reward change only needs to polish existing behaviour (e.g. remove a small oscillation): it takes minutes instead of a full run, and it can work where training from scratch with the same reward fails.
 
 ## Usage
 
@@ -117,7 +86,6 @@ python -m tdmpc2.train_tdmpc2 task=flip
 python plot_curves.py
 
 # watch a model: policy is zero, hover, random, scripted_hover, scripted_flip, or any model in models/ (ppo_*, tdmpc2_*)
-# (scripted_* are hand-written controllers, a baseline; seed picks the start; plan=false for tdmpc2 without MPPI)
 python animate_rollout.py policy=ppo_hover
 python animate_rollout.py policy=ppo_flip save=plots/flip.gif
 ```
