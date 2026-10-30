@@ -7,11 +7,14 @@ Teaching a simulated quadrotor to do a flip with reinforcement learning: one rol
 TD-MPC2 is shown twice: acting with MPPI planning (the actual algorithm), and with its learned policy alone (no planning, same model).
 
 <table>
-  <tr><th>PPO</th><th>TD-MPC2 (MPPI)</th><th>TD-MPC2 (no plan)</th></tr>
+  <tr><th>TD-MPC2 (MPPI)</th><th>TD-MPC2 (no plan)</th></tr>
   <tr>
-    <td><img src="docs/ppo_flip.gif" alt="PPO: flip, fly back to the start point and hover"></td>
-    <td><img src="docs/tdmpc2_flip.gif" alt="TD-MPC2 with MPPI: flip, then drift near the start point"></td>
-    <td><img src="docs/tdmpc2_flip_no_plan.gif" alt="TD-MPC2 policy alone: flip, fly back towards the start point and hover"></td>
+    <td><img src="docs/tdmpc2_flip.gif" width="400" alt="TD-MPC2 with MPPI: flip, then drift near the start point"></td>
+    <td><img src="docs/tdmpc2_flip_no_plan.gif" width="400" alt="TD-MPC2 policy alone: flip, fly back towards the start point and hover"></td>
+  </tr>
+  <tr><th colspan="2">PPO</th></tr>
+  <tr>
+    <td colspan="2" align="center"><img src="docs/ppo_flip.gif" width="400" alt="PPO: flip, fly back to the start point and hover"></td>
   </tr>
 </table>
 
