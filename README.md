@@ -15,22 +15,24 @@ TD-MPC2 is shown twice: acting with MPPI planning (the actual algorithm), and wi
   </tr>
 </table>
 
-![Evaluation return vs env steps](docs/learning_curves.png)
+![Total episode reward vs env steps](docs/learning_curves.png)
 
 
 
 | | PPO | TD-MPC2 (MPPI) | TD-MPC2 (no plan) |
 |---|---|---|---|
-| Return | 203 | 94 | 165 |
+| Total episode reward | 203 | 94 | 165 |
 | Final distance to start point | 0.07 m | 0.55 m | 0.32 m |
 | Speed, last 0.5 s | 0.001 m/s | 1.5 m/s | 0.09 m/s |
 | Crashes | 0/5 | 0/5 | 0/5 |
-| Env steps to first reach return 150 | 475k | 20k | 30k |
+| Env steps to first reach total reward 150 | 475k | 20k | 30k |
 | Training steps / wall-clock time | 1M / 21 min | 60k / 71 min | (same run) |
 | Model size (trained parameters) | 40k | 331k | (same model) |
 | Inference time per step, median (p99) | 0.2 ms (0.6 ms) | 18 ms (25 ms) | 0.5 ms (1.4 ms) |
 
-TD-MPC2 learns the flip with about 20× fewer env steps, but its evaluation return swings a lot from one evaluation to the next. PPO needs far more env steps but less wall-clock time, and ends steadier: it hovers back at the start point.
+TD-MPC2 learns the flip with about 20× fewer env steps, but its total episode reward swings a lot from one evaluation to the next. PPO needs far more env steps but less wall-clock time, and ends steadier: it hovers back at the start point.
+
+Total episode reward is the sum of the per-step rewards over one evaluation episode (no discounting), averaged over 5 fixed starts.
 
 Inference time is the wall-clock time to compute one action from one observation, on a laptop CPU (Intel i7-1065G7, PyTorch CPU build, batch size 1).
 
@@ -82,7 +84,7 @@ tensorboard --logdir runs
 # MPPI size and the rest are in configs/tdmpc2.yaml.
 python -m tdmpc2.train_tdmpc2 task=flip
 
-# learning curves: evaluation return vs env steps, from the logs both trainers write
+# learning curves: total episode reward vs env steps, from the logs both trainers write
 python plot_curves.py
 
 # watch a model: policy is zero, hover, random, scripted_hover, scripted_flip, or any model in models/ (ppo_*, tdmpc2_*)

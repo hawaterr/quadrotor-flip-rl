@@ -1,4 +1,4 @@
-"""Plot the benchmark learning curves: evaluation return vs env steps, one line per algorithm.
+"""Plot the benchmark learning curves: total episode reward vs env steps, one line per algorithm.
 
 Reads the evaluation logs the trainers write during training (results/<model name>.csv, every eval_every
 steps). Settings: configs/plot_curves.yaml; override any of them as key=value.
@@ -29,7 +29,7 @@ def read_log(path):
 
 def main():
     cfg = load_config("plot_curves")
-    curves = {}  # label: (env steps, return)
+    curves = {}  # label: (env steps, total episode reward)
     for label, curve in cfg.curves.items():
         log = read_log(curve.file) if os.path.exists(curve.file) else None
         if log and curve.column in log:
@@ -43,9 +43,9 @@ def main():
     ax.set_facecolor(SURFACE)
     for (label, (step, y)), color in zip(curves.items(), SERIES):
         ax.plot(step, y, color=color, lw=2, label=label)
-    ax.set_title("Evaluation return", loc="left", fontsize=11, color=TEXT)
+    ax.set_title("Total episode reward", loc="left", fontsize=11, color=TEXT)
     ax.set_xlabel("env steps (0.02 s each)")
-    ax.set_ylabel("return (mean over starts)")
+    ax.set_ylabel("total reward per episode (mean over starts)")
     if cfg.log_x:
         ax.set_xscale("symlog", linthresh=1e3)  # symlog: the first evaluation is at step 0
         top = max(max(step) for step, _ in curves.values())
