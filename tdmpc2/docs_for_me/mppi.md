@@ -32,3 +32,5 @@ How TD-MPC2 updates σ, at each of its planning iterations:
 
 σ is reset to σ_max at the start of each new control step.
 To accelerate convergence of planning, a fraction of action sequences originate from the policy prior p.
+
+Check MPPI code for all details
