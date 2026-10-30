@@ -1,9 +1,8 @@
-Even faster: Q networks huge, 1 less? smaller ? ... Other optimisations for faster training and runtime?
-can resume tdmpc? 
 make multiple runs, std , ... Support this in 1 run?
 specify inference running on what, no gpu access
 clean up readme, too much text, gifs too small, ...
-problem with MPPI?
+problem with MPPI? changing params does not seem to improve
+can resume tdmpc? 
 ---------MVP Done----------------------
 domain randomisation
 curriculum learning
