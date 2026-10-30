@@ -110,7 +110,7 @@ python -m ppo.train_ppo task=flip env.reward.smooth=0.3     # an experiment: any
 tensorboard --logdir runs
 
 # TD-MPC2: train hover / flip; saves models/tdmpc2_<task>.pt
-# MPPI size and the rest are in configs/tdmpc2.yaml (about 14 steps/s on a laptop CPU).
+# MPPI size and the rest are in configs/tdmpc2.yaml.
 python -m tdmpc2.train_tdmpc2 task=flip
 
 # learning curves: evaluation return vs env steps, from the logs both trainers write

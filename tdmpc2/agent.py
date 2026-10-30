@@ -195,8 +195,8 @@ class TDMPC2: # TDMPC2 is the agent itself. It owns the world model, the two opt
             {"params": m.encoder.parameters(), "lr": c.lr * c.enc_lr_scale},
             {"params": [*m.dynamics.parameters(), *m.reward.parameters(),
                         *m.termination.parameters(), *m.qs.parameters()]},
-        ], lr=c.lr)
-        self.pi_optim = torch.optim.Adam(m.pi.parameters(), lr=c.lr, eps=1e-5)
+        ], lr=c.lr, fused=True)  # fused: one kernel for all params, instead of a Python loop on CPU
+        self.pi_optim = torch.optim.Adam(m.pi.parameters(), lr=c.lr, eps=1e-5, fused=True)
         self.prev_mean = torch.zeros(c.horizon, act_dim)  # MPPI warm start
 
     def n_params(self):
@@ -306,14 +306,19 @@ class TDMPC2: # TDMPC2 is the agent itself. It owns the world model, the two opt
 
     def _update_pi(self, zs): # equation 4
         c, m = self.cfg, self.model
-        _, a, log_prob = m.policy(zs)
-        q = m.q(zs, a, self.two_hot, "avg")  # gradients flow into the action only; Q is not stepped here
-        self.scale.update(q[0])
-        q = self.scale(q)
-        rho = (c.rho ** torch.arange(len(q), dtype=torch.float32)).view(-1, 1, 1)
-        loss = (rho * (c.entropy_coef * log_prob - q)).mean(dim=(1, 2)).mean()
-        self.pi_optim.zero_grad(set_to_none=True)
-        loss.backward()
+        # Gradients flow into the action only; Q is not stepped here, so don't compute its weight gradients
+        m.qs.requires_grad_(False)
+        try:
+            _, a, log_prob = m.policy(zs)
+            q = m.q(zs, a, self.two_hot, "avg")
+            self.scale.update(q[0])
+            q = self.scale(q)
+            rho = (c.rho ** torch.arange(len(q), dtype=torch.float32)).view(-1, 1, 1)
+            loss = (rho * (c.entropy_coef * log_prob - q)).mean(dim=(1, 2)).mean()
+            self.pi_optim.zero_grad(set_to_none=True)
+            loss.backward()
+        finally:
+            m.qs.requires_grad_(True)
         nn.utils.clip_grad_norm_(m.pi.parameters(), c.grad_clip)
         self.pi_optim.step()
         return loss.item()

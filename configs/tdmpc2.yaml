@@ -4,14 +4,20 @@
 
 task: hover               # hover | flip
 train_seed: 0             # seed of the training run (network init, exploration, env), for reproducible runs
+name: null                # file name of the model, eval log and TensorBoard run (default tdmpc2_<task>); use
+                          #   another for experiments, so they don't overwrite the main run
 
 steps: 100000             # env steps to train for
+max_minutes: null         # stop (and save) after this much wall-clock time, e.g. to compare settings at equal time
 save_every: 5000          # env steps between checkpoints (models/tdmpc2_<task>.pt), to check progress mid-run
-eval_every: 2500          # env steps between evaluations, with MPPI and with the policy alone (columns
+eval_every: 5000          # env steps between evaluations, with MPPI and with the policy alone (columns
                           #   return / policy_return ...), logged to results/tdmpc2_<task>.csv
 eval_seeds: [0, 1, 2, 3, 4]  # one evaluation episode per seed (start from rest)
 threads: 4                # torch CPU threads
-plan_after: 0             # act with the policy prior (fast) until this step, then with MPPI
+plan_after: null          # act with the policy prior (fast) until this step, then with MPPI; null: never plan
+                          #   while collecting data, MPPI is used in evaluation only (~40x cheaper per step)
+update_every: 1           # env steps per gradient update, after the seed steps (paper: 1); 2 halves the update
+                          #   cost, which is the largest part of a training step
 min_seed_steps: 1000      # random-action steps before learning starts: max(min_seed_steps,
 seed_episodes: 5          #   seed_episodes * episode length)
 log_every_episodes: 10    # console progress line
@@ -22,7 +28,7 @@ agent:
   latent_dim: 64          # size of z; a multiple of simnorm_dim
   mlp_dim: 128            # hidden layer width of all networks except the encoder (sets most of the cost)
   enc_dim: 128            # hidden layer width of the encoder
-  num_q: 5                # Q-function ensemble size
+  num_q: 5                # Q-function ensemble size (paper: 5); the TD target and policy use the min/mean of 2
   simnorm_dim: 8          # SimNorm group size
   num_bins: 101           # two-hot bins for reward and value
   vmin: -10.0             # two-hot support, in symlog space
@@ -44,7 +50,8 @@ agent:
   entropy_coef: 1e-4
   log_std_min: -10.0
   log_std_max: 2.0
-  # planning (MPPI). Halved from the paper's 512 x 6 to keep CPU training to about 10 steps/s
+  # planning (MPPI), used in evaluation and animate_rollout.py (and in training if plan_after is set). Halved
+  # from the paper's 512 x 6: ~20 ms per action on a laptop CPU
   iterations: 4
   num_samples: 256
   num_elites: 64
@@ -59,6 +66,6 @@ hover:
     discount: 0.98        # per 0.02 s step (env.policy_dt): a ~1 s horizon, same as PPO
 
 flip:
-  steps: 60000            # the last run stopped improving after ~35k steps
+  steps: 50000            # ~20 min on a laptop CPU at ~40 steps/s
   agent:
     discount: 0.98        # per 0.02 s step (env.policy_dt): a ~1 s horizon, same as PPO

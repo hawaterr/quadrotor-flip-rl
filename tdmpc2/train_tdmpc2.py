@@ -5,6 +5,7 @@ Watch a trained agent with animate_rollout.py; the learning curve is logged to r
 Run from the repo root:
     python -m tdmpc2.train_tdmpc2                               # train hover; saves models/tdmpc2_hover.pt
     python -m tdmpc2.train_tdmpc2 task=flip                     # train flip; saves models/tdmpc2_flip.pt
+    python -m tdmpc2.train_tdmpc2 task=flip name=test           # an experiment; saves models/test.pt
 """
 import time
 
@@ -28,7 +29,7 @@ class Buffer:
         self.action = np.zeros((capacity, act_dim), np.float32)
         self.reward = np.zeros((capacity, 1), np.float32)
         self.terminated = np.zeros((capacity, 1), np.float32)
-        self.n, self.ep_start, self.starts = 0, 0, []
+        self.n, self.ep_start, self.starts = 0, 0, np.zeros(0, np.int64)
 
     def add(self, obs, action, reward, terminated, next_obs):
         i = self.n
@@ -37,7 +38,8 @@ class Buffer:
         self.n += 1
 
     def end_episode(self):
-        self.starts.extend(range(self.ep_start, self.n - self.H + 1))
+        # An array, not a list: np.random.choice would convert a list of up to `capacity` starts on every sample
+        self.starts = np.concatenate([self.starts, np.arange(self.ep_start, self.n - self.H + 1)])
         self.ep_start = self.n
 
     def sample(self, batch_size):
@@ -49,24 +51,26 @@ class Buffer:
 
 def train(cfg):
     task = cfg.task
+    name = cfg.name or f"tdmpc2_{task}"
     env = QuadEnv(cfg=cfg.env, training=True)
     obs_dim, act_dim = env.observation_space.shape[0], env.action_space.shape[0]
+    # Seeded before the agent is built, so train_seed also fixes the network initialisation
+    torch.manual_seed(cfg.train_seed)
+    np.random.seed(cfg.train_seed)
+    env.action_space.seed(cfg.train_seed)
     agent = TDMPC2(obs_dim, act_dim, cfg.agent)
     buf = Buffer(obs_dim, act_dim, cfg.steps, cfg.agent.horizon)
     seed_steps = max(cfg.min_seed_steps, cfg.seed_episodes * env.max_steps)
     print(f"{agent.n_params() / 1e6:.2f}M params, episode length {env.max_steps}, discount {cfg.agent.discount:.3f}, "
           f"{seed_steps} random seed steps")
-    writer = SummaryWriter(f"runs/tdmpc2_{task}_{time.strftime('%m%d-%H%M%S')}")
+    writer = SummaryWriter(f"runs/{name}_{time.strftime('%m%d-%H%M%S')}")
 
     def save():
         # The config goes with the model, so evaluation rebuilds the env it was trained in
-        agent.save(f"models/tdmpc2_{task}.pt", task=task, config=cfg.to_dict(), env_cfg=cfg.env.to_dict())
+        agent.save(f"models/{name}.pt", task=task, config=cfg.to_dict(), env_cfg=cfg.env.to_dict())
 
-    torch.manual_seed(cfg.train_seed)
-    np.random.seed(cfg.train_seed)
-    env.action_space.seed(cfg.train_seed)
     # Learning curve: evaluation starts from rest, without the mid-roll curriculum
-    eval_log, eval_env = EvalLog(f"tdmpc2_{task}"), QuadEnv(cfg=cfg.env)
+    eval_log, eval_env = EvalLog(name), QuadEnv(cfg=cfg.env)
     obs, _ = env.reset(seed=cfg.train_seed)
     t0, ep_ret, ep_len_now, ep, tic, info = True, 0.0, 0, 0, time.time(), {}
     step = 0
@@ -75,7 +79,7 @@ def train(cfg):
             if step < seed_steps:
                 a = env.action_space.sample()
             else:
-                a = agent.act(obs, t0=t0, plan=step >= cfg.plan_after)
+                a = agent.act(obs, t0=t0, plan=cfg.plan_after is not None and step >= cfg.plan_after)
             next_obs, r, term, trunc, env_info = env.step(a)
             buf.add(obs, a, r, term, next_obs)
             obs, t0, ep_ret, ep_len_now = next_obs, False, ep_ret + r, ep_len_now + 1
@@ -93,13 +97,13 @@ def train(cfg):
                           + "  ".join(f"{k} {v:.3f}" for k, v in info.items()))
                 obs, _ = env.reset()
                 t0, ep_ret, ep_len_now = True, 0.0, 0
-            if step >= seed_steps:
-                # Pretrain on the seed data once, as in the paper, then one update per env step
+            if step >= seed_steps and (step - seed_steps) % cfg.update_every == 0:
+                # Pretrain on the seed data once, as in the paper, then one update every update_every env steps
                 for _ in range(seed_steps if step == seed_steps else 1):
                     info = agent.update(*buf.sample(cfg.agent.batch_size))
-                if step % cfg.log_every_steps == 0:
-                    for k, v in info.items():
-                        writer.add_scalar(f"train/{k}", v, step)
+            if step >= seed_steps and step % cfg.log_every_steps == 0:
+                for k, v in info.items():
+                    writer.add_scalar(f"train/{k}", v, step)
             if step > 0 and step % cfg.save_every == 0:
                 save()
                 print(f"checkpoint saved at step {step}")
@@ -110,12 +114,15 @@ def train(cfg):
                                          cfg.eval_seeds)
                 eval_log.write(step, time.time() - tic, {**mppi, **{f"policy_{k}": v for k, v in policy.items()}})
                 t0 = True  # evaluation used the MPPI warm start; restart it for the training episode
+            if cfg.max_minutes is not None and time.time() - tic > 60 * cfg.max_minutes:
+                print(f"time limit of {cfg.max_minutes} min reached at {step} steps")
+                break
     except KeyboardInterrupt:
         print(f"\ninterrupted at {step} steps, saving what we have")
     finally:
         writer.close()
     save()
-    print(f"saved models/tdmpc2_{task}.pt")
+    print(f"saved models/{name}.pt")
 
 
 if __name__ == "__main__":
