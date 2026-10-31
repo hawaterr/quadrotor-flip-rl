@@ -18,16 +18,19 @@ from configs import Config
 
 # --- math helpers ----------------------------------------------------------------------------------
 
-def symlog(x): # symetric log
+def symlog(x):
+    """Symmetric log: sign(x) * log(1 + |x|). Compresses large magnitudes, keeps the sign."""
     return torch.sign(x) * torch.log1p(x.abs())
 
 
-def symexp(x): # symetric exponential
+def symexp(x):
+    """Inverse of symlog."""
     return torch.sign(x) * (torch.exp(x.abs()) - 1)
 
 
-class TwoHot: # A two-hot vector spreads the probability over the two neighbouring bins that surround the value
-    """Scalars <-> categorical over num_bins evenly spaced bins in symlog space."""
+class TwoHot:
+    """Scalars <-> categorical over num_bins evenly spaced bins in symlog space. A two-hot vector spreads the
+    probability over the two neighbouring bins that surround the value."""
 
     def __init__(self, cfg):
         self.vmin, self.vmax, self.n = cfg.vmin, cfg.vmax, cfg.num_bins
@@ -61,8 +64,9 @@ class SimNorm(nn.Module):
     input:   [ 2.0,  0.0, -1.0 |  1.0,  1.0,  1.0 ]
               group 1      |      group 2
     output:  [0.84, 0.11, 0.04 | 0.33, 0.33, 0.33 ]
-    It applies the softmax to small groups separately instead of once over the whole vector.
-    With 16 groups of 8, the latent becomes 16 independent categorical-like variables. Each group makes its own choice without affecting the others. 
+    It applies the softmax to small groups separately instead of once over the whole vector. With latent_dim 64
+    and simnorm_dim 8, the latent becomes 8 independent categorical-like variables of 8 values each. Each group
+    makes its own choice without affecting the others.
     """
 
     def __init__(self, dim):
@@ -137,22 +141,24 @@ class RunningScale:
 
 # --- world model -----------------------------------------------------------------------------------
 
-class WorldModel(nn.Module): # holds all the networks
+class WorldModel(nn.Module):
+    """All the networks: encoder, latent dynamics, reward, termination, policy prior and the Q ensemble."""
+
     def __init__(self, obs_dim, act_dim, cfg):
         super().__init__()
         self.cfg = cfg
         z, a, h = cfg.latent_dim, act_dim, [cfg.mlp_dim] * 2
-        self.encoder = mlp(obs_dim, [cfg.enc_dim], z, SimNorm(cfg.simnorm_dim)) # h() in paper
-        self.dynamics = mlp(z + a, h, z, SimNorm(cfg.simnorm_dim)) # d() in paper
-        self.reward = mlp(z + a, h, cfg.num_bins) # r_hat() in paper
+        self.encoder = mlp(obs_dim, [cfg.enc_dim], z, SimNorm(cfg.simnorm_dim))  # h in the paper
+        self.dynamics = mlp(z + a, h, z, SimNorm(cfg.simnorm_dim))  # d in the paper
+        self.reward = mlp(z + a, h, cfg.num_bins)  # R in the paper
         self.termination = mlp(z, h, 1)  # logit that the episode ended on arriving at z (not in paper)
-        self.pi = mlp(z, h, 2 * a) # p() in paper
-        self.qs = EnsembleMLP(cfg.num_q, z + a, h, cfg.num_bins, dropout=cfg.dropout) # 5 Qs in paper, computed together
+        self.pi = mlp(z, h, 2 * a)  # p in the paper
+        self.qs = EnsembleMLP(cfg.num_q, z + a, h, cfg.num_bins, dropout=cfg.dropout)  # Q ensemble, batched
         # Zero-init reward and Q outputs: predictions start at 0 instead of random
         for weight, bias in [(self.reward[-1].weight, self.reward[-1].bias), (self.qs.weights[-1], self.qs.biases[-1])]:
             nn.init.zeros_(weight)
             nn.init.zeros_(bias)
-        self.target_qs = copy.deepcopy(self.qs) # 5 Qs_bar in paper
+        self.target_qs = copy.deepcopy(self.qs)  # Q̄ in the paper
         self.target_qs.requires_grad_(False)
 
     def next(self, z, a):
@@ -182,7 +188,9 @@ class WorldModel(nn.Module): # holds all the networks
 
 # --- agent -----------------------------------------------------------------------------------------
 
-class TDMPC2: # TDMPC2 is the agent itself. It owns the world model, the two optimizers, and the MPPI warm-start state.
+class TDMPC2:
+    """The agent: owns the world model, the two optimizers and the MPPI warm-start state."""
+
     def __init__(self, obs_dim, act_dim, cfg):
         """cfg: the `agent` section of configs/tdmpc2.yaml."""
         self.cfg = cfg
@@ -200,6 +208,7 @@ class TDMPC2: # TDMPC2 is the agent itself. It owns the world model, the two opt
         self.prev_mean = torch.zeros(c.horizon, act_dim)  # MPPI warm start
 
     def n_params(self):
+        """Number of trained parameters (the target Q copies excluded)."""
         return sum(p.numel() for name, p in self.model.named_parameters() if not name.startswith("target_"))
 
     # --- acting ---
@@ -216,8 +225,9 @@ class TDMPC2: # TDMPC2 is the agent itself. It owns the world model, the two opt
             a = (mean if eval_mode else a)[0]
         return a.clamp(-1, 1).numpy()
 
-    def _estimate_value(self, z, actions): # equation 6 in paper
-        """Discounted return of action sequences (H, N, A) from latent z (N, Z), plus a Q bootstrap."""
+    def _estimate_value(self, z, actions):
+        """Discounted return of action sequences (H, N, A) from latent z (N, Z), plus a Q bootstrap
+        (Eq. 6 in the paper)."""
         G, discount, done = 0, 1, torch.zeros(z.shape[0], 1)
         for a in actions:
             r = self.two_hot.decode(self.model.reward(torch.cat([z, a], -1)))
@@ -228,7 +238,8 @@ class TDMPC2: # TDMPC2 is the agent itself. It owns the world model, the two opt
         _, a, _ = self.model.policy(z)
         return G + discount * (1 - done) * self.model.q(z, a, self.two_hot, "avg")
 
-    def _plan(self, z, t0, eval_mode): # the MPPI planner from Section 3.2.
+    def _plan(self, z, t0, eval_mode):
+        """MPPI in latent space (Section 3.2 of the paper); returns the action to execute."""
         c, A = self.cfg, self.act_dim
         H, N, P = c.horizon, c.num_samples, c.num_pi_trajs
         actions = torch.empty(H, N, A)
@@ -260,8 +271,9 @@ class TDMPC2: # TDMPC2 is the agent itself. It owns the world model, the two opt
 
     # --- learning ---
 
-    def update(self, obs, action, reward, terminated): # equation 5, then 4 with _update_pi
-        """obs (H+1, B, O), action/reward/terminated (H, B, ·). Returns a dict of losses."""
+    def update(self, obs, action, reward, terminated):
+        """One gradient step on the world model (Eq. 5 in the paper), then on the policy prior (Eq. 4).
+        obs (H+1, B, O), action/reward/terminated (H, B, ·). Returns a dict of losses."""
         c, m = self.cfg, self.model
         m.train()
         with torch.no_grad():
@@ -299,12 +311,13 @@ class TDMPC2: # TDMPC2 is the agent itself. It owns the world model, the two opt
 
         with torch.no_grad():
             for p, tp in zip(m.qs.parameters(), m.target_qs.parameters()):
-                tp.lerp_(p, c.tau) # Q bars are slow moving targets of Q
+                tp.lerp_(p, c.tau)  # Q̄: slow-moving copies of Q, for the TD target
         return {"consistency": consistency.item(), "reward": reward_loss.item(), "value": value_loss.item(),
                 "termination": term_loss.item(), "pi": pi_loss, "grad_norm": grad_norm.item(),
                 "q_scale": float(self.scale.value)}
 
-    def _update_pi(self, zs): # equation 4
+    def _update_pi(self, zs):
+        """Policy prior step (Eq. 4 in the paper): maximise the scaled Q plus a small entropy bonus."""
         c, m = self.cfg, self.model
         # Gradients flow into the action only; Q is not stepped here, so don't compute its weight gradients
         m.qs.requires_grad_(False)

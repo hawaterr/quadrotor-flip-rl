@@ -5,7 +5,7 @@
 
 Action (4, in [-1, 1]): collective thrust, roll rate, pitch rate, yaw rate  -> scaled to CTBR.
     Thrust is centred on hover: a[0] = 0 -> thrust = g, so a zero-mean initial policy roughly hovers.
-Observation: ground-truth state for now. Later, swap in your IMU-based estimate.
+Observation: the ground-truth state (no sensor noise or state estimation).
 
 All settings (dynamics, episode length, limits, start noise, curriculum, reward weights) come from
 configs/env.yaml (configs.load_env).
@@ -14,7 +14,7 @@ import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 
-from configs import TASKS, load_env  # noqa: F401  (TASKS is re-exported for the scripts)
+from configs import load_env
 from envs.quadrotor import G, Quadrotor
 
 # Observation scaling, to keep inputs roughly in [-1, 1]. Fixed, not a config setting: trained models
@@ -45,8 +45,9 @@ class QuadEnv(gym.Env):
         n_obs = 22 + (2 if self.task == "flip" else 0)
         self.observation_space = spaces.Box(-np.inf, np.inf, shape=(n_obs,), dtype=np.float32)
 
-    def _scale_action(self, a):
-        # a[0] = -1 -> 0 thrust, 0 -> g, 1 -> max thrust
+    def scale_action(self, a):
+        """Action in [-1, 1] -> (collective thrust / mass [m/s^2], body rates [rad/s]).
+        a[0] = -1 -> 0 thrust, 0 -> g, 1 -> max thrust."""
         if a[0] >= 0:
             thrust = G + a[0] * (self.quad.max_thrust_acc - G)
         else:
@@ -117,7 +118,7 @@ class QuadEnv(gym.Env):
 
     def step(self, action):
         action = np.clip(action, -1, 1)
-        thrust, rates = self._scale_action(action)
+        thrust, rates = self.scale_action(action)
         for _ in range(self.substeps):
             self.quad.step(thrust, rates)
             self.roll_progress += self.quad.w[0] * self.quad.dt

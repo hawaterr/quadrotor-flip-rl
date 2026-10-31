@@ -6,11 +6,11 @@ Settings: configs/animate_rollout.yaml; override any of them as key=value.
     python animate_rollout.py                           # hand-coded hover controller (tests env + physics, no RL)
     python animate_rollout.py policy=scripted_flip      # hand-coded flip
     python animate_rollout.py policy=zero               # thrust off: should fall
-    python animate_rollout.py policy=hover              # constant hover thrust, no feedback: drifts from the perturbed start
+    python animate_rollout.py policy=hover              # constant hover thrust, no feedback: drifts
     python animate_rollout.py policy=random
-    python animate_rollout.py policy=ppo_hover          # trained model from ppo/train_ppo.py (models/ppo_hover.zip)
-    python animate_rollout.py policy=ppo_flip           # trained model from ppo/train_ppo.py task=flip (models/ppo_flip.zip)
-    python animate_rollout.py policy=tdmpc2_flip        # trained agent from tdmpc2/train_tdmpc2.py task=flip, with MPPI
+    python animate_rollout.py policy=ppo_hover          # models/ppo_hover.zip, from ppo/train_ppo.py
+    python animate_rollout.py policy=ppo_flip           # models/ppo_flip.zip, from ppo/train_ppo.py task=flip
+    python animate_rollout.py policy=tdmpc2_flip        # models/tdmpc2_flip.pt, acting with MPPI
     python animate_rollout.py policy=tdmpc2_flip plan=false    # same agent, policy prior only (no MPPI)
     python animate_rollout.py policy=ppo_flip_v1        # any model file in models/ named ppo_* or tdmpc2_*
     python animate_rollout.py save=plots/hover.gif      # also save the animation
@@ -23,9 +23,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.animation import FuncAnimation
 
-from configs import Config, load_config, load_env
+from configs import TASKS, Config, load_config, load_env
 from envs.evaluation import SETTLE_WINDOW
-from envs.quad_env import TASKS, QuadEnv
+from envs.quad_env import QuadEnv
 from envs.quadrotor import G
 
 ARM = 0.15  # visual arm length [m]
@@ -133,7 +133,7 @@ def rollout(env, policy, seed):
         infer_ms.append(1000 * (time.perf_counter() - start))
         action = np.clip(action, -1, 1)
         action_change.append(np.abs(action - env.prev_action).sum())
-        thrust_cmd, rate_cmd = env._scale_action(action)
+        thrust_cmd, rate_cmd = env.scale_action(action)
         log["thrust_cmd"].append(env.quad.m * thrust_cmd)
         log["rate_cmd"].append(rate_cmd)
         obs, r, term, trunc, info = env.step(action)
@@ -162,7 +162,7 @@ def animate(log, policy_dt, save=None, start_pause=0.0, plots=True):
     """start_pause: seconds to hold the first frame (t = 0) before playing.
     plots: False draws the 3D view alone, with no plots, status text or axis labels."""
     P = np.array(log["p"])
-    # Arm tips in body frame (X configuration) and the body "up" axis
+    # Arm tips in body frame (X configuration)
     arms = ARM * np.array([[1, 1, 0], [-1, -1, 0], [1, -1, 0], [-1, 1, 0]]) / np.sqrt(2)
 
     if plots:
@@ -209,7 +209,8 @@ def animate(log, policy_dt, save=None, start_pause=0.0, plots=True):
         panels = [(gs[1, 0], "thrust [N]", "b", [("thrust_cmd", None, "--", "cmd"), ("thrust", None, "-", "actual")]),
                   (gs[1, 1], "height z [m]", "k", [("z", None, "-", None)])]
         for k, (name, col) in enumerate(zip(("roll", "pitch", "yaw"), ("C3", "C2", "C0"))):
-            panels += [(gs[k + 2, 0], f"{name} rate [rad/s]", col, [("rate_cmd", k, "--", "cmd"), ("w", k, "-", "actual")]),
+            panels += [(gs[k + 2, 0], f"{name} rate [rad/s]", col,
+                        [("rate_cmd", k, "--", "cmd"), ("w", k, "-", "actual")]),
                        (gs[k + 2, 1], f"{name} [deg]", col, [("angle", k, "-", None)])]
     lines = []  # (line, series name, column or None)
     for cell, ylabel, col, curves in panels:
