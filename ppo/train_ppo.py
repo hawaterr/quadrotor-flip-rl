@@ -3,8 +3,8 @@
 Settings: configs/ppo.yaml (+ configs/env.yaml as env.*); override any of them as key=value.
 Watch a trained model with animate_rollout.py; the learning curve is logged to results/ (plot_curves.py).
 Run from the repo root:
-    python -m ppo.train_ppo                          # train hover; saves models/ppo_hover.zip (+ .yaml)
-    python -m ppo.train_ppo task=flip steps=300000   # train flip; saves models/ppo_flip.zip (+ .yaml)
+    python -m ppo.train_ppo                          # train flip; saves models/ppo_flip.zip (+ .yaml)
+    python -m ppo.train_ppo task=hover steps=300000  # train hover; saves models/ppo_hover.zip (+ .yaml)
 """
 import os
 import time

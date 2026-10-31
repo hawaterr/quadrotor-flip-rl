@@ -1,7 +1,7 @@
 """Gymnasium quadrotor environment with selectable task.
 
-    task="hover": hold a fixed target point, starting from a perturbed state.
-    task="flip":  do one roll flip, then recover to level and stop rotating.
+    task="flip":  do one roll flip, then recover to level and fly back to the start point.
+    task="hover": hold a fixed target point, starting from a perturbed state (a quick sanity check).
 
 Action (4, in [-1, 1]): collective thrust, roll rate, pitch rate, yaw rate  -> scaled to CTBR.
     Thrust is centred on hover: a[0] = 0 -> thrust = g, so a zero-mean initial policy roughly hovers.
@@ -27,7 +27,7 @@ POS_SCALE = 2.0   # m
 class QuadEnv(gym.Env):
     metadata = {"render_modes": []}
 
-    def __init__(self, task="hover", cfg=None, training=False):
+    def __init__(self, task="flip", cfg=None, training=False):
         """cfg: the env config (cfg.env of a loaded config); by default configs/env.yaml for `task`.
         training=True turns on the flip's mid-roll starts (curriculum); evaluation always starts from rest."""
         self.cfg = cfg if cfg is not None else load_env(task)

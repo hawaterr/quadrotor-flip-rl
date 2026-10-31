@@ -54,6 +54,27 @@ pip install -r requirements.txt
 python -c "import gymnasium, stable_baselines3, torch, matplotlib; print('ok', torch.__version__)"
 ```
 
+## Usage
+
+```bash
+# Train (algorithm settings in configs/ppo.yaml and configs/tdmpc2.yaml; env and rewards in configs/env.yaml)
+python -m ppo.train_ppo                                     # saves models/ppo_flip.zip
+python -m tdmpc2.train_tdmpc2                               # saves models/tdmpc2_flip.pt
+python -m ppo.train_ppo env.reward.smooth=0.3 name=test     # an experiment: any config value can be overridden
+
+# watch training curves
+tensorboard --logdir runs
+
+# learning curves: total episode reward vs env steps, from the logs both trainers write
+python plot_curves.py
+
+# watch a model: policy is zero, hover, random, scripted_hover, scripted_flip, or any model in models/ (ppo_*, tdmpc2_*)
+python animate_rollout.py policy=ppo_flip
+python animate_rollout.py policy=tdmpc2_flip plan=false save=plots/flip.gif
+```
+
+There is also a `hover` task (hold a point, starting from a perturbed state). It trains in minutes, so it is a quick sanity check for the env and the algorithms: `python -m ppo.train_ppo task=hover steps=300000`, then `python animate_rollout.py policy=ppo_hover`.
+
 ## Checkpoints and fine-tuning
 
 Training saves the model every `save_every` env steps (`configs/ppo.yaml`: 100k, `configs/tdmpc2.yaml`: 5k), not only at the end or on Ctrl-C. It writes the usual model file, so you can check progress while training continues, with the usual commands:
@@ -63,34 +84,11 @@ python animate_rollout.py policy=tdmpc2_flip plan=false     # latest checkpoint 
 python plot_curves.py                                       # learning curves so far (results/ is written every eval_every steps)
 ```
 
-Fine tuning an existing model is supported for PPO:
+Fine-tuning an existing model is supported for PPO:
 
 ```bash
-python -m ppo.train_ppo task=flip name=ppo_flip_test # experiment: saves models/ppo_flip_test.zip, main model untouched
-python -m ppo.train_ppo task=flip init_model=models/ppo_flip.zip steps=500000 env.reward.speed=0.3 # fine-tune: continue from a saved model with changed settings
-```
-
-## Usage
-
-```bash
-# PPO: train (steps from configs/ppo.yaml); saves models/ppo_<task>.zip. task is hover (default) or flip
-python -m ppo.train_ppo steps=300000
-python -m ppo.train_ppo task=flip
-python -m ppo.train_ppo task=flip env.reward.smooth=0.3     # an experiment: any config value can be overridden
-
-# watch training curves
-tensorboard --logdir runs
-
-# TD-MPC2: train hover / flip; saves models/tdmpc2_<task>.pt
-# MPPI size and the rest are in configs/tdmpc2.yaml.
-python -m tdmpc2.train_tdmpc2 task=flip
-
-# learning curves: total episode reward vs env steps, from the logs both trainers write
-python plot_curves.py
-
-# watch a model: policy is zero, hover, random, scripted_hover, scripted_flip, or any model in models/ (ppo_*, tdmpc2_*)
-python animate_rollout.py policy=ppo_hover
-python animate_rollout.py policy=ppo_flip save=plots/flip.gif
+python -m ppo.train_ppo name=ppo_flip_test    # experiment: saves models/ppo_flip_test.zip, main model untouched
+python -m ppo.train_ppo init_model=models/ppo_flip.zip steps=500000 env.reward.speed=0.3    # fine-tune: continue from a saved model with changed settings
 ```
 
 ## License

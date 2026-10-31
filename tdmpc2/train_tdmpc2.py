@@ -3,9 +3,9 @@
 Settings: configs/tdmpc2.yaml (+ configs/env.yaml as env.*); override any of them as key=value.
 Watch a trained agent with animate_rollout.py; the learning curve is logged to results/ (plot_curves.py).
 Run from the repo root:
-    python -m tdmpc2.train_tdmpc2                               # train hover; saves models/tdmpc2_hover.pt
-    python -m tdmpc2.train_tdmpc2 task=flip                     # train flip; saves models/tdmpc2_flip.pt
-    python -m tdmpc2.train_tdmpc2 task=flip name=test           # an experiment; saves models/test.pt
+    python -m tdmpc2.train_tdmpc2                               # train flip; saves models/tdmpc2_flip.pt
+    python -m tdmpc2.train_tdmpc2 task=hover                    # train hover; saves models/tdmpc2_hover.pt
+    python -m tdmpc2.train_tdmpc2 name=test                     # an experiment; saves models/test.pt
 """
 import time
 
