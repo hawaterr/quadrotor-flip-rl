@@ -43,9 +43,9 @@ def read_seeds(run, column, seeds):
     return step, np.array([log[column][:n] for log in logs])
 
 
-def main():
-    cfg = load_config("plot_curves")
-    curves = {}  # label: (env steps, seeds x evals total episode reward)
+def load_curves(cfg):
+    """{legend label: (env steps, seeds x evals array)} for the curves in the config that have logs."""
+    curves = {}
     for label, curve in cfg.curves.items():
         data = read_seeds(curve.run, curve.column, cfg.seeds)
         if data:
@@ -53,7 +53,11 @@ def main():
     if not curves:
         raise SystemExit(f"no evaluation logs found: results/<run>_seed<i>.csv for runs "
                          f"{sorted({c.run for c in cfg.curves.values()})}, seeds {cfg.seeds}")
+    return curves
 
+
+def plot(curves, log_x, out):
+    """Mean over seeds with a band of +- 1 std, one line per curve, saved to `out`."""
     plt.rcParams.update({"font.size": 10, "text.color": TEXT, "axes.labelcolor": TEXT_2,
                          "xtick.color": TEXT_2, "ytick.color": TEXT_2, "axes.edgecolor": GRID})
     fig, ax = plt.subplots(figsize=(7, 4.2), facecolor=SURFACE)
@@ -67,7 +71,7 @@ def main():
     ax.set_title("Total episode reward", loc="left", fontsize=11, color=TEXT)
     ax.set_xlabel("env steps (0.02 s each)")
     ax.set_ylabel("total reward per episode\n(mean ± std over training seeds)")
-    if cfg.log_x:
+    if log_x:
         ax.set_xscale("symlog", linthresh=1e3)  # symlog: the first evaluation is at step 0
         top = max(max(step) for step, _ in curves.values())
         ax.set_xticks([0] + [10 ** k for k in range(3, 8) if 10 ** k <= top])
@@ -76,9 +80,14 @@ def main():
     ax.spines[["top", "right"]].set_visible(False)
     ax.legend(frameon=False, loc="upper left", fontsize=9)
     fig.tight_layout()
-    os.makedirs(os.path.dirname(cfg.out) or ".", exist_ok=True)
-    fig.savefig(cfg.out, dpi=150, facecolor=SURFACE)
-    print(f"saved {cfg.out}")
+    os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
+    fig.savefig(out, dpi=150, facecolor=SURFACE)
+    print(f"saved {out}")
+
+
+def main():
+    cfg = load_config("plot_curves")
+    plot(load_curves(cfg), cfg.log_x, cfg.out)
 
 
 if __name__ == "__main__":

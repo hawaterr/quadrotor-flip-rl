@@ -74,47 +74,46 @@ class QuadEnv(gym.Env):
         """options={"exact": True} (used for evaluation): drop the minimum v/w spread, so a start with zero
         noise (the flip's) is exactly at rest."""
         super().reset(seed=seed)
-        rng = self.np_random
-        start = self.cfg.start
-
-        # Spread of the random start (configs/env.yaml, `start`). During training, velocity and body rates
-        # get at least min_std, so even a zero-noise start differs a little each episode. "exact" removes
-        # that minimum. A spread of 0 means rng.normal returns exactly its mean, 0.
-        exact = (options or {}).get("exact", False)
-        min_std = 0.0 if exact else start.min_std
-        tilt_std = start.tilt_std
-        pos_range = start.pos_range
-        v_std = max(start.v_std, min_std)
-        w_std = max(start.w_std, min_std)
-
-        # Random small tilt as an axis-angle -> quaternion
-        axis_angle = rng.normal(0, tilt_std, 3)
-        angle = np.linalg.norm(axis_angle)
-        axis = axis_angle / angle if angle > 1e-8 else np.array([1.0, 0, 0])
-        q0 = np.concatenate([[np.cos(angle / 2)], np.sin(angle / 2) * axis])
-        self.quad.reset(
-            p=self.target + rng.uniform(-pos_range, pos_range, 3),
-            v=rng.normal(0, v_std, 3),
-            q=q0,
-            w=rng.normal(0, w_std, 3),
-        )
+        self._random_start(exact=(options or {}).get("exact", False))
         self.roll_progress = 0.0
         self.flip_done = False
-        # Flip training curriculum: some episodes start part-way through a roll, so the agent practises
-        # "finish the flip and recover" before it can do a whole flip
         mid = self.cfg.mid_flip
         prob = mid.prob if (self.training and mid is not None) else 0.0
-        if self.task == "flip" and rng.random() < prob:
-            # Already rolling at a random angle, with some climb speed to carry it through
-            phi = rng.uniform(0, mid.max_angle_frac * 2 * np.pi)
-            self.quad.q = np.array([np.cos(phi / 2), np.sin(phi / 2), 0.0, 0.0])
-            self.quad.w = np.array([mid.roll_rate, 0, 0]) + rng.normal(0, mid.rate_std, 3)
-            self.quad.v = np.array([0, 0, mid.climb_speed]) + rng.normal(0, mid.climb_std, 3)
-            self.roll_progress = phi
+        if self.task == "flip" and self.np_random.random() < prob:
+            self._mid_flip_start()
         self.best_progress = np.clip(self.roll_progress, 0, 2 * np.pi)
         self.prev_action = np.zeros(4)
         self.t = 0
         return self._obs(), {}
+
+    def _random_start(self, exact):
+        """Reset the quadrotor to a random state around the target, with the spread in configs/env.yaml (`start`).
+        During training, velocity and body rates get at least min_std, so even a zero-noise start differs a little
+        each episode; `exact` removes that minimum. A spread of 0 means rng.normal returns exactly its mean, 0."""
+        rng, start = self.np_random, self.cfg.start
+        min_std = 0.0 if exact else start.min_std
+        # Random small tilt as an axis-angle -> quaternion
+        axis_angle = rng.normal(0, start.tilt_std, 3)
+        angle = np.linalg.norm(axis_angle)
+        axis = axis_angle / angle if angle > 1e-8 else np.array([1.0, 0, 0])
+        q0 = np.concatenate([[np.cos(angle / 2)], np.sin(angle / 2) * axis])
+        self.quad.reset(
+            p=self.target + rng.uniform(-start.pos_range, start.pos_range, 3),
+            v=rng.normal(0, max(start.v_std, min_std), 3),
+            q=q0,
+            w=rng.normal(0, max(start.w_std, min_std), 3),
+        )
+
+    def _mid_flip_start(self):
+        """Flip training curriculum: start part-way through a roll, so the agent practises "finish the flip and
+        recover" before it can do a whole flip. Already rolling at a random angle, with some climb speed to carry
+        it through."""
+        rng, mid = self.np_random, self.cfg.mid_flip
+        phi = rng.uniform(0, mid.max_angle_frac * 2 * np.pi)
+        self.quad.q = np.array([np.cos(phi / 2), np.sin(phi / 2), 0.0, 0.0])
+        self.quad.w = np.array([mid.roll_rate, 0, 0]) + rng.normal(0, mid.rate_std, 3)
+        self.quad.v = np.array([0, 0, mid.climb_speed]) + rng.normal(0, mid.climb_std, 3)
+        self.roll_progress = phi
 
     def step(self, action):
         action = np.clip(action, -1, 1)
