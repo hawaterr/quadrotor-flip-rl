@@ -3,17 +3,16 @@
 The policy name also picks the task: <name>_flip runs the flip env, everything else the hover env.
 Settings: configs/animate_rollout.yaml; override any of them as key=value.
 
-    python animate_rollout.py                           # hand-coded hover controller (tests env + physics, no RL)
-    python animate_rollout.py policy=scripted_flip      # hand-coded flip
+    python animate_rollout.py                           # hand-coded flip (tests env + physics, no RL)
+    python animate_rollout.py policy=scripted_hover     # hand-coded hover controller
     python animate_rollout.py policy=zero               # thrust off: should fall
     python animate_rollout.py policy=hover              # constant hover thrust, no feedback: drifts
     python animate_rollout.py policy=random
-    python animate_rollout.py policy=ppo_hover          # models/ppo_hover.zip, from ppo/train_ppo.py
-    python animate_rollout.py policy=ppo_flip           # models/ppo_flip.zip, from ppo/train_ppo.py task=flip
+    python animate_rollout.py policy=ppo_flip           # models/ppo_flip.zip, from ppo/train_ppo.py
     python animate_rollout.py policy=tdmpc2_flip        # models/tdmpc2_flip.pt, acting with MPPI
     python animate_rollout.py policy=tdmpc2_flip plan=false    # same agent, policy prior only (no MPPI)
     python animate_rollout.py policy=ppo_flip_v1        # any model file in models/ named ppo_* or tdmpc2_*
-    python animate_rollout.py save=plots/hover.gif      # also save the animation
+    python animate_rollout.py save=plots/flip.gif       # also save the animation
     python animate_rollout.py plots=false               # 3D view alone (no plots or text), as in the README
 """
 import os

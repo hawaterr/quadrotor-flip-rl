@@ -1,8 +1,8 @@
 # TD-MPC2. Override anything on the command line, e.g.
-#   python -m tdmpc2.train_tdmpc2 task=flip steps=60000 agent.num_samples=512
+#   python -m tdmpc2.train_tdmpc2 steps=60000 agent.num_samples=512
 # The env settings (env.*) come from env.yaml for the chosen task.
 
-task: hover               # hover | flip
+task: flip                # flip | hover
 train_seed: 0             # seed of the training run (network init, exploration, env), for reproducible runs
 name: null                # file name of the model, eval log and TensorBoard run (default tdmpc2_<task>); use
                           #   another for experiments, so they don't overwrite the main run

@@ -1,8 +1,8 @@
 # PPO (Stable-Baselines3). Override anything on the command line, e.g.
-#   python -m ppo.train_ppo task=flip steps=300000 env.reward.smooth=0.3
+#   python -m ppo.train_ppo steps=300000 env.reward.smooth=0.3
 # The env settings (env.*) come from env.yaml for the chosen task, including env.policy_dt.
 
-task: hover               # hover | flip
+task: flip                # flip | hover
 train_seed: 0             # seed of the training run (network init, exploration, env), for reproducible runs
 
 steps: 1000000            # env steps to train for

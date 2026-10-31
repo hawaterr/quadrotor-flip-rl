@@ -1,9 +1,9 @@
 # animate_rollout.py. Override on the command line, e.g.
 #   python animate_rollout.py policy=tdmpc2_flip plan=false save=plots/flip.gif
 
-policy: scripted_hover    # zero, hover, random, scripted_<task>, or any model in models/ (ppo_*, tdmpc2_*)
+policy: scripted_flip     # zero, hover, random, scripted_<task>, or any model in models/ (ppo_*, tdmpc2_*)
 seed: 0                   # seed of the episode's starting state
-save: null                # e.g. plots/hover.gif to also save the animation
+save: null                # e.g. plots/flip.gif to also save the animation
 plan: true                # tdmpc2_*: false acts with the policy prior alone, without MPPI
 start_pause: 0.7          # s to hold the first frame (t = 0), so the starting position is easy to see
 plots: true               # false: 3D view alone, without the plots, status text and axis numbers
