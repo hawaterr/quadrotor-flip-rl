@@ -6,7 +6,7 @@ State:
     q   orientation quaternion [w, x, y, z]   (body -> world)
     w   angular velocity, body frame [rad/s]
 
-Simplifications (fine for a first version, improve later):
+Simplifications:
     - The rate controller outputs torques directly (no motor mixing, no motor saturation).
     - First-order lag on collective thrust only.
     - No drag, no ground contact.
@@ -17,6 +17,7 @@ G = 9.81
 
 
 def quat_mul(a, b):
+    """Hamilton product a * b of quaternions [w, x, y, z]."""
     w1, x1, y1, z1 = a
     w2, x2, y2, z2 = b
     return np.array([
@@ -28,6 +29,7 @@ def quat_mul(a, b):
 
 
 def quat_to_rot(q):
+    """Rotation matrix (body -> world) of a unit quaternion [w, x, y, z]."""
     w, x, y, z = q
     return np.array([
         [1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)],
@@ -64,7 +66,6 @@ class Quadrotor:
         """One physics step. thrust_acc_cmd: collective thrust / mass [m/s^2]. rate_cmd: body rates [rad/s]."""
         dt = self.dt
 
-        # Clip high values
         thrust_acc_cmd = np.clip(thrust_acc_cmd, 0.0, self.max_thrust_acc)
         rate_cmd = np.clip(rate_cmd, -self.max_rate, self.max_rate)
 
@@ -74,9 +75,6 @@ class Quadrotor:
         # Rate controller: P on rate error + gyroscopic compensation
         Iw = self.I @ self.w
         torque = self.I @ (self.kp * (rate_cmd - self.w)) + np.cross(self.w, Iw)
-        # beta flight has similar low level controller: apply torque proportional to error in angular velocity
-        # then do compensation for gyroscopic effects
-        # NOTE: rate is using low level controller but thrust low pass filter, a bit odd
 
         # Translational dynamics (world frame)
         acc = self.R @ np.array([0.0, 0.0, self.thrust_acc]) - np.array([0.0, 0.0, G])
@@ -94,7 +92,7 @@ class Quadrotor:
 
 
 if __name__ == "__main__":
-    # Sanity checks
+    # Sanity checks: python -m envs.quadrotor
     from configs import load_env
     quad = Quadrotor(load_env("hover").dynamics)
 

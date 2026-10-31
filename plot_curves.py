@@ -18,7 +18,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 
 from configs import load_config  # noqa: E402
 
-# Validated reference palette (categorical slots 1-3 in fixed order) and recessive ink, light surface
+# Line colours (one per curve, in order), then background, text, secondary text and grid
 SERIES = ["#2a78d6", "#eb6834", "#1baf7a"]
 SURFACE, TEXT, TEXT_2, GRID = "#fcfcfb", "#0b0b0b", "#52514e", "#e4e3df"
 
