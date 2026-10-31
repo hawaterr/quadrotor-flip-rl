@@ -14,7 +14,7 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.env_util import make_vec_env
 
-from configs import Config, load_config, load_env
+from configs import Config, load_config
 from envs.evaluation import EvalLog, evaluate as evaluate_policy
 from envs.quad_env import QuadEnv
 
@@ -23,13 +23,9 @@ def model_name(cfg):
     return cfg.name or f"ppo_{cfg.task}"
 
 
-def saved_env_config(task, name=None):
-    """The env config saved next to models/<name>.zip (default ppo_<task>); env.yaml for models saved before
-    configs existed."""
-    path = f"models/{name or f'ppo_{task}'}.yaml"
-    if not os.path.exists(path):
-        return load_env(task)
-    return Config(OmegaConf.to_container(OmegaConf.load(path)).get("env"))
+def saved_env_config(name):
+    """The env config saved next to models/<name>.zip."""
+    return Config(OmegaConf.to_container(OmegaConf.load(f"models/{name}.yaml"))["env"])
 
 
 def save(model, cfg):

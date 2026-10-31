@@ -45,12 +45,9 @@ def _env_section(task):
     return OmegaConf.merge(shared, {"mid_flip": None}, raw[task], {"task": task})
 
 
-def load_env(task, policy_dt=None):
-    """The env config for `task` on its own (scripts without an algorithm config). policy_dt overrides env.yaml's."""
-    env = _env_section(task)
-    if policy_dt is not None:
-        env.policy_dt = policy_dt
-    return Config(OmegaConf.to_container(env))
+def load_env(task):
+    """The env config for `task` on its own (scripts without an algorithm config)."""
+    return Config(OmegaConf.to_container(_env_section(task)))
 
 
 def load_config(name, argv=None):
@@ -70,14 +67,3 @@ def load_config(name, argv=None):
     task_section = raw.get(task) if task is not None else None
     cfg = OmegaConf.merge(cfg, task_section or {}, cli)
     return Config(OmegaConf.to_container(cfg))
-
-
-def env_from_checkpoint(meta, task):
-    """The env config saved with a model. Models saved before config files existed fall back to env.yaml,
-    plus the ctrl_dt (the old name of policy_dt) / smooth_coef they stored."""
-    if meta.get("env_cfg") is not None:
-        return Config(meta["env_cfg"])
-    env = load_env(task, policy_dt=meta.get("ctrl_dt"))
-    if meta.get("smooth_coef") is not None:
-        env.reward["smooth"] = meta["smooth_coef"]
-    return env

@@ -23,7 +23,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.animation import FuncAnimation
 
-from configs import env_from_checkpoint, load_config, load_env
+from configs import Config, load_config, load_env
 from envs.evaluation import SETTLE_WINDOW
 from envs.quad_env import TASKS, QuadEnv
 from envs.quadrotor import G
@@ -53,15 +53,13 @@ def task_of(policy):
 
 def env_config_for(policy):
     """Trained models run in the env they were trained in (saved with the model); baselines use env.yaml."""
-    task = task_of(policy)
     if policy.startswith("tdmpc2_"):
         import torch
-        ckpt = torch.load(f"models/{policy}.pt", weights_only=False)
-        return env_from_checkpoint(ckpt, ckpt.get("task", task))
+        return Config(torch.load(f"models/{policy}.pt", weights_only=False)["env_cfg"])
     if policy.startswith("ppo_"):
         from ppo.train_ppo import saved_env_config
-        return saved_env_config(task, policy)
-    return load_env(task)
+        return saved_env_config(policy)
+    return load_env(task_of(policy))
 
 
 def make_policy(name, env, plan=True, scripted=None):

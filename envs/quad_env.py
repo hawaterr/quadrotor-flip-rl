@@ -27,11 +27,10 @@ POS_SCALE = 2.0   # m
 class QuadEnv(gym.Env):
     metadata = {"render_modes": []}
 
-    def __init__(self, task="hover", cfg=None, training=False, policy_dt=None):
-        """cfg: the env config (cfg.env of a loaded config); by default configs/env.yaml for `task`
-        (policy_dt overrides the file's).
+    def __init__(self, task="hover", cfg=None, training=False):
+        """cfg: the env config (cfg.env of a loaded config); by default configs/env.yaml for `task`.
         training=True turns on the flip's mid-roll starts (curriculum); evaluation always starts from rest."""
-        self.cfg = cfg if cfg is not None else load_env(task, policy_dt=policy_dt)
+        self.cfg = cfg if cfg is not None else load_env(task)
         self.task = self.cfg.task
         self.training = training
         self.quad = Quadrotor(self.cfg.dynamics)
@@ -171,11 +170,11 @@ class QuadEnv(gym.Env):
             reward += r.target * np.exp(-dist / r.target_scale)
             reward -= r.body_rate * np.linalg.norm(q.w)
             # Capped, so being fast right after the flip can't outweigh the positive terms (crashing would
-            # then pay); models saved before speed_cap existed have no cap
-            reward -= r.speed * min(np.linalg.norm(q.v), r.get("speed_cap", np.inf))
+            # then pay)
+            reward -= r.speed * min(np.linalg.norm(q.v), r.speed_cap)
             # Thrust away from hover (action 0): free when hovering steadily, costly when bobbing on full-on /
-            # full-off thrust. Models saved before thrust_effort existed don't have it
-            reward -= r.get("thrust_effort", 0.0) * action[0] ** 2
+            # full-off thrust
+            reward -= r.thrust_effort * action[0] ** 2
 
         # Stay near the start point (climbing away is not free), keep actions smooth.
         # The first free_dist metres are free: a flip needs to climb first and ends up above the start.
