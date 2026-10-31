@@ -15,6 +15,9 @@ models/
 checkpoints/
 logs/
 wandb/
+# Evaluation logs: only the benchmark runs behind the README are tracked
+results/*
+!results/*_seed[0-9].csv
 
 # Generated plots and animations
 plots/
@@ -29,3 +32,7 @@ papers/
 # Editors / OS
 .vscode/
 .DS_Store
+
+# Personal notes
+roadmap.md
+tdmpc2/docs_for_me/
