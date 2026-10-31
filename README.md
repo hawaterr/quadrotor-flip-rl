@@ -77,17 +77,11 @@ There is also a `hover` task (hold a point, starting from a perturbed state). It
 
 ## Reproducing the results
 
-Three training seeds per algorithm, then the figure and the GIFs (from seed 0):
+[reproduce.sh](reproduce.sh) trains both algorithms on 3 seeds (~11 h on a laptop CPU), then writes the figure and the GIFs (from seed 0) to `docs/`:
 
 ```bash
-for i in 0 1 2; do
-  python -m ppo.train_ppo train_seed=$i name=ppo_flip_seed$i            # ~23 min each
-  python -m tdmpc2.train_tdmpc2 train_seed=$i name=tdmpc2_flip_seed$i   # ~3.4 h each
-done
-python plot_curves.py                                                   # docs/learning_curves.png
-python animate_rollout.py policy=ppo_flip_seed0 plots=false save=docs/ppo_flip.gif
-python animate_rollout.py policy=tdmpc2_flip_seed0 plots=false save=docs/tdmpc2_flip.gif
-python animate_rollout.py policy=tdmpc2_flip_seed0 plan=false plots=false save=docs/tdmpc2_flip_no_plan.gif
+./reproduce.sh                   # train, then figure and GIFs
+./reproduce.sh --skip-training   # figure and GIFs only, from the models in models/
 ```
 
 The evaluation logs of these runs are in `results/`, so `python plot_curves.py` works without retraining.
