@@ -272,10 +272,27 @@ class TDMPC2:
     # --- learning ---
 
     def update(self, obs, action, reward, terminated):
-        """One gradient step on the world model (Eq. 5 in the paper), then on the policy prior (Eq. 4).
+        """One gradient step on the world model, then on the policy prior, then the target Q update.
         obs (H+1, B, O), action/reward/terminated (H, B, ·). Returns a dict of losses."""
         c, m = self.cfg, self.model
         m.train()
+        loss, zs, losses = self._world_model_loss(obs, action, reward, terminated)
+        self.optim.zero_grad(set_to_none=True)
+        loss.backward()
+        grad_norm = nn.utils.clip_grad_norm_(m.parameters(), c.grad_clip)
+        self.optim.step()
+
+        pi_loss = self._update_pi(zs.detach())
+
+        with torch.no_grad():
+            for p, tp in zip(m.qs.parameters(), m.target_qs.parameters()):
+                tp.lerp_(p, c.tau)  # Q̄: slow-moving copies of Q, for the TD target
+        return {**losses, "pi": pi_loss, "grad_norm": grad_norm.item(), "q_scale": float(self.scale.value)}
+
+    def _world_model_loss(self, obs, action, reward, terminated):
+        """Consistency, reward and value losses over the horizon (Eq. 5 in the paper), plus the termination loss.
+        Returns (total loss, latents (H+1, B, Z) rolled out from obs[0], dict of the loss parts)."""
+        c, m = self.cfg, self.model
         with torch.no_grad():
             next_z = m.encoder(obs[1:])
             _, next_a, _ = m.policy(next_z)
@@ -302,19 +319,8 @@ class TDMPC2:
         term_loss = F.binary_cross_entropy_with_logits(term_logits, terminated)
         loss = (c.consistency_coef * consistency + c.reward_coef * reward_loss
                 + c.value_coef * value_loss) / c.horizon + c.termination_coef * term_loss
-        self.optim.zero_grad(set_to_none=True)
-        loss.backward()
-        grad_norm = nn.utils.clip_grad_norm_(m.parameters(), c.grad_clip)
-        self.optim.step()
-
-        pi_loss = self._update_pi(zs.detach())
-
-        with torch.no_grad():
-            for p, tp in zip(m.qs.parameters(), m.target_qs.parameters()):
-                tp.lerp_(p, c.tau)  # Q̄: slow-moving copies of Q, for the TD target
-        return {"consistency": consistency.item(), "reward": reward_loss.item(), "value": value_loss.item(),
-                "termination": term_loss.item(), "pi": pi_loss, "grad_norm": grad_norm.item(),
-                "q_scale": float(self.scale.value)}
+        return loss, zs, {"consistency": consistency.item(), "reward": reward_loss.item(),
+                          "value": value_loss.item(), "termination": term_loss.item()}
 
     def _update_pi(self, zs):
         """Policy prior step (Eq. 4 in the paper): maximise the scaled Q plus a small entropy bonus."""

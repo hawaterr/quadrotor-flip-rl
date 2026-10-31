@@ -49,9 +49,9 @@ class Buffer:
         return t(obs), t(self.action[s]), t(self.reward[s]), t(self.terminated[s])
 
 
-def train(cfg):
-    task = cfg.task
-    name = cfg.name or f"tdmpc2_{task}"
+def _build(cfg):
+    """The training env, the agent and its replay buffer, seeded with cfg.train_seed. Also returns the number of
+    random-action seed steps before learning starts."""
     env = QuadEnv(cfg=cfg.env, training=True)
     obs_dim, act_dim = env.observation_space.shape[0], env.action_space.shape[0]
     # Seeded before the agent is built, so train_seed also fixes the network initialisation
@@ -63,6 +63,42 @@ def train(cfg):
     seed_steps = max(cfg.min_seed_steps, cfg.seed_episodes * env.max_steps)
     print(f"{agent.n_params() / 1e6:.2f}M params, episode length {env.max_steps}, discount {cfg.agent.discount:.3f}, "
           f"{seed_steps} random seed steps")
+    return env, agent, buf, seed_steps
+
+
+def _log_episode(writer, step, ep_ret, ep_len, task, env_info, crashed):
+    """TensorBoard scalars of a finished training episode."""
+    writer.add_scalar("episode/return", ep_ret, step)
+    writer.add_scalar("episode/length", ep_len, step)
+    if task == "flip":
+        writer.add_scalar("episode/flip_done", float(env_info["flip_done"]), step)
+        writer.add_scalar("episode/crashed", float(crashed), step)
+
+
+def _learn(agent, buf, cfg, step, seed_steps, writer, info):
+    """The gradient updates of this env step (none during the seed steps), and the losses to TensorBoard every
+    log_every_steps. Returns the latest losses (`info` itself if there was no update)."""
+    if step >= seed_steps and (step - seed_steps) % cfg.update_every == 0:
+        # Pretrain on the seed data once, as in the paper, then one update every update_every env steps
+        for _ in range(seed_steps if step == seed_steps else 1):
+            info = agent.update(*buf.sample(cfg.agent.batch_size))
+    if step >= seed_steps and step % cfg.log_every_steps == 0:
+        for k, v in info.items():
+            writer.add_scalar(f"train/{k}", v, step)
+    return info
+
+
+def _evaluate(agent, eval_env, eval_log, seeds, step, wall_time):
+    """Evaluate with MPPI (the actual algorithm) and with the learned policy alone (no planning); log both."""
+    mppi = evaluate_policy(eval_env, lambda o, t: agent.act(o, t0=t == 0, eval_mode=True), seeds)
+    policy = evaluate_policy(eval_env, lambda o, t: agent.act(o, t0=t == 0, eval_mode=True, plan=False), seeds)
+    eval_log.write(step, wall_time, {**mppi, **{f"policy_{k}": v for k, v in policy.items()}})
+
+
+def train(cfg):
+    task = cfg.task
+    name = cfg.name or f"tdmpc2_{task}"
+    env, agent, buf, seed_steps = _build(cfg)
     writer = SummaryWriter(f"runs/{name}_{time.strftime('%m%d-%H%M%S')}")
 
     def save():
@@ -85,11 +121,7 @@ def train(cfg):
             obs, t0, ep_ret, ep_len_now = next_obs, False, ep_ret + r, ep_len_now + 1
             if term or trunc:
                 buf.end_episode()
-                writer.add_scalar("episode/return", ep_ret, step)
-                writer.add_scalar("episode/length", ep_len_now, step)
-                if task == "flip":
-                    writer.add_scalar("episode/flip_done", float(env_info["flip_done"]), step)
-                    writer.add_scalar("episode/crashed", float(term), step)
+                _log_episode(writer, step, ep_ret, ep_len_now, task, env_info, term)
                 ep += 1
                 if ep % cfg.log_every_episodes == 0:
                     sps = step / (time.time() - tic)
@@ -97,22 +129,12 @@ def train(cfg):
                           + "  ".join(f"{k} {v:.3f}" for k, v in info.items()))
                 obs, _ = env.reset()
                 t0, ep_ret, ep_len_now = True, 0.0, 0
-            if step >= seed_steps and (step - seed_steps) % cfg.update_every == 0:
-                # Pretrain on the seed data once, as in the paper, then one update every update_every env steps
-                for _ in range(seed_steps if step == seed_steps else 1):
-                    info = agent.update(*buf.sample(cfg.agent.batch_size))
-            if step >= seed_steps and step % cfg.log_every_steps == 0:
-                for k, v in info.items():
-                    writer.add_scalar(f"train/{k}", v, step)
+            info = _learn(agent, buf, cfg, step, seed_steps, writer, info)
             if step > 0 and step % cfg.save_every == 0:
                 save()
                 print(f"checkpoint saved at step {step}")
             if step % cfg.eval_every == 0:
-                # With MPPI (the actual algorithm) and with the learned policy alone (no planning)
-                mppi = evaluate_policy(eval_env, lambda o, t: agent.act(o, t0=t == 0, eval_mode=True), cfg.eval_seeds)
-                policy = evaluate_policy(eval_env, lambda o, t: agent.act(o, t0=t == 0, eval_mode=True, plan=False),
-                                         cfg.eval_seeds)
-                eval_log.write(step, time.time() - tic, {**mppi, **{f"policy_{k}": v for k, v in policy.items()}})
+                _evaluate(agent, eval_env, eval_log, cfg.eval_seeds, step, time.time() - tic)
                 t0 = True  # evaluation used the MPPI warm start; restart it for the training episode
             if cfg.max_minutes is not None and time.time() - tic > 60 * cfg.max_minutes:
                 print(f"time limit of {cfg.max_minutes} min reached at {step} steps")
