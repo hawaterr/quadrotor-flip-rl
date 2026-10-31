@@ -92,3 +92,7 @@ python plot_curves.py
 python animate_rollout.py policy=ppo_hover
 python animate_rollout.py policy=ppo_flip save=plots/flip.gif
 ```
+
+## License
+
+[PolyForm Noncommercial 1.0.0](LICENSE): free for any noncommercial use (personal projects, study, hobby, noncommercial research). Commercial use is not permitted. Copyright (c) 2026 Ali Hawater.
