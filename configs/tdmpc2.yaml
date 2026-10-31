@@ -66,6 +66,6 @@ hover:
     discount: 0.98        # per 0.02 s step (env.policy_dt): a ~1 s horizon, same as PPO
 
 flip:
-  steps: 100000            # ~20 min on a laptop CPU at ~40 steps/s
+  steps: 200000            # ~3.4 h on a laptop CPU (i7-1065G7) at ~16 steps/s, evaluations included
   agent:
     discount: 0.98        # per 0.02 s step (env.policy_dt): a ~1 s horizon, same as PPO

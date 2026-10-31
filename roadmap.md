@@ -1,10 +1,9 @@
-make multiple runs, std , ... Support this in 1 run?
 problem with MPPI? changing params does not seem to improve
-can resume tdmpc? 
 ---------MVP Done----------------------
 domain randomisation
 curriculum learning
 better drone model
+can fine tune tdmpc too not just PPO? 
 
 research directions:
 - generalise to different tasks, benchmark

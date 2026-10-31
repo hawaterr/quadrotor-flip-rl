@@ -10,33 +10,34 @@ TD-MPC2 is shown twice: acting with MPPI planning (the actual algorithm), and wi
   <tr><th>PPO</th><th>TD-MPC2 (MPPI)</th><th>TD-MPC2 (no plan)</th></tr>
   <tr>
     <td><img src="docs/ppo_flip.gif" alt="PPO: flip, fly back to the start point and hover"></td>
-    <td><img src="docs/tdmpc2_flip.gif" alt="TD-MPC2 with MPPI: flip, then drift near the start point"></td>
+    <td><img src="docs/tdmpc2_flip.gif" alt="TD-MPC2 with MPPI: flip, then hover near the start point, still drifting slightly"></td>
     <td><img src="docs/tdmpc2_flip_no_plan.gif" alt="TD-MPC2 policy alone: flip, fly back towards the start point and hover"></td>
   </tr>
 </table>
 
 ![Total episode reward vs env steps](docs/learning_curves.png)
 
+Each algorithm was trained with 3 seeds. The curves show the mean over the seeds, with a band of ± 1 std. The GIFs and the table are from seed 0, except the two rows marked "all 3 seeds".
+
 
 
 | | PPO | TD-MPC2 (MPPI) | TD-MPC2 (no plan) |
 |---|---|---|---|
-| Total episode reward | 203 | 94 | 165 |
-| Final distance to start point | 0.07 m | 0.55 m | 0.32 m |
-| Speed, last 0.5 s | 0.001 m/s | 1.5 m/s | 0.09 m/s |
-| Crashes | 0/5 | 0/5 | 0/5 |
-| Env steps to first reach total reward 150 | 475k | 20k | 30k |
-| Training steps / wall-clock time | 1M / 21 min | 60k / 71 min | (same run) |
+| Total episode reward | 204 | 173 | 194 |
+| Final distance to start point | 0.07 m | 0.13 m | 0.14 m |
+| Speed, last 0.5 s | 0.001 m/s | 0.14 m/s | 0.009 m/s |
+| Env steps to first reach total reward 150 | 475k | 75k | 70k |
+| Total episode reward, all 3 seeds (mean ± std) | 205 ± 1 | 184 ± 10 | 189 ± 6 |
+| Env steps to first reach 150, all 3 seeds (mean ± std) | 492k ± 14k | 58k ± 14k | 53k ± 15k |
+| Training steps / wall-clock time | 1M / 23 min | 200k / 3.4 h | (same run) |
 | Model size (trained parameters) | 40k | 331k | (same model) |
-| Inference time per step, median (p99) | 0.2 ms (0.6 ms) | 18 ms (25 ms) | 0.5 ms (1.4 ms) |
+| Inference time per step, median (p99) | 0.2 ms (0.5 ms) | 16 ms (20 ms) | 0.4 ms (0.5 ms) |
 
-TD-MPC2 learns the flip with about 20× fewer env steps, but its total episode reward swings a lot from one evaluation to the next. PPO needs far more env steps but less wall-clock time, and ends steadier: it hovers back at the start point.
+TD-MPC2 learns the flip with about 9× fewer env steps. PPO needs far more env steps but much less wall-clock time, finishes with a higher total episode reward.
 
-Total episode reward is the sum of the per-step rewards over one evaluation episode (no discounting), averaged over 5 fixed starts.
+Total episode reward is the sum of the per-step rewards over one evaluation episode (no discounting), averaged over 5 fixed starts. The table uses each run's last evaluation (TD-MPC2's is at 195k steps).
 
 Inference time is the wall-clock time to compute one action from one observation, on a laptop CPU (Intel i7-1065G7, PyTorch CPU build, batch size 1).
-
-Regenerate: `python animate_rollout.py policy=ppo_flip plots=false save=docs/ppo_flip.gif` (same for `tdmpc2_flip`, plus `plan=false save=docs/tdmpc2_flip_no_plan.gif`; drop `plots=false` to also see the command and attitude plots) and `python plot_curves.py`.
 
 ## Setup
 
