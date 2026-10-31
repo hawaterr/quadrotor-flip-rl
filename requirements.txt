@@ -1,7 +1,6 @@
-numpy
-gymnasium
-stable-baselines3
-torch
-matplotlib
-tensorboard
-omegaconf
+numpy==2.2.6
+gymnasium==1.4.0
+stable-baselines3==2.9.0
+matplotlib==3.10.9
+tensorboard==2.21.0
+omegaconf==2.4.0

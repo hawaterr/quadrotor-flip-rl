@@ -42,12 +42,12 @@ Inference time is the wall-clock time to compute one action from one observation
 ## Setup
 
 ```bash
-python3 -m venv .venv
+python3 -m venv .venv    # Python 3.10
 source .venv/bin/activate
 
 # CPU-only PyTorch (much smaller than the default CUDA build)
 pip install --upgrade pip
-pip install torch --index-url https://download.pytorch.org/whl/cpu
+pip install torch==2.14.1 --index-url https://download.pytorch.org/whl/cpu
 pip install -r requirements.txt
 
 # check that everything imports
@@ -74,6 +74,23 @@ python animate_rollout.py policy=tdmpc2_flip plan=false save=plots/flip.gif
 ```
 
 There is also a `hover` task (hold a point, starting from a perturbed state). It trains in minutes, so it is a quick sanity check for the env and the algorithms: `python -m ppo.train_ppo task=hover steps=300000`, then `python animate_rollout.py policy=ppo_hover`.
+
+## Reproducing the results
+
+Three training seeds per algorithm, then the figure and the GIFs (from seed 0):
+
+```bash
+for i in 0 1 2; do
+  python -m ppo.train_ppo train_seed=$i name=ppo_flip_seed$i            # ~23 min each
+  python -m tdmpc2.train_tdmpc2 train_seed=$i name=tdmpc2_flip_seed$i   # ~3.4 h each
+done
+python plot_curves.py                                                   # docs/learning_curves.png
+python animate_rollout.py policy=ppo_flip_seed0 plots=false save=docs/ppo_flip.gif
+python animate_rollout.py policy=tdmpc2_flip_seed0 plots=false save=docs/tdmpc2_flip.gif
+python animate_rollout.py policy=tdmpc2_flip_seed0 plan=false plots=false save=docs/tdmpc2_flip_no_plan.gif
+```
+
+The evaluation logs of these runs are in `results/`, so `python plot_curves.py` works without retraining.
 
 ## Checkpoints and fine-tuning
 
