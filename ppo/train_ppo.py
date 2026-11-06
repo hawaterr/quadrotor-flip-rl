@@ -73,7 +73,8 @@ def train(cfg):
     else:
         model = PPO("MlpPolicy", env, n_steps=cfg.n_steps, batch_size=cfg.batch_size, gamma=cfg.gamma,
                     learning_rate=cfg.learning_rate, ent_coef=cfg.ent_coef, verbose=1,
-                    policy_kwargs=dict(net_arch=cfg.net_arch), tensorboard_log="runs", seed=cfg.train_seed)
+                    policy_kwargs=dict(net_arch=cfg.net_arch, log_std_init=cfg.log_std_init), tensorboard_log="runs",
+                    seed=cfg.train_seed)
     try:
         model.learn(total_timesteps=cfg.steps, callback=PeriodicSaveAndEval(cfg))
     except KeyboardInterrupt:

@@ -13,5 +13,6 @@ scripted:
   pd_kp: 4.0              # 1/s^2, position gain of the cascaded PD controller
   pd_kd: 3.0              # 1/s, velocity gain
   att_gain: 8.0           # 1/s, body rate per unit of attitude error
-  flip_climb_time: 0.25   # s at full thrust before rolling
+  flip_climb_time: 0.08   # s at full thrust before rolling; motors at full thrust can't start a roll quickly, so a
+                          #   longer climb overshoots the start point by metres
   flip_thrust: -0.2       # action thrust while rolling (slightly below hover)

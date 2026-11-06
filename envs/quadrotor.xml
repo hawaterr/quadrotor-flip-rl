@@ -1,7 +1,7 @@
-<!-- The quadrotor. Mass, inertia and timestep are placeholders: they come from the `dynamics` section of
-     configs/env.yaml, written into the model when it is loaded (so config overrides and the config saved with
-     a trained model keep working). The geoms are for rendering only: contacts are off, and the explicit
-     <inertial> means they add no mass or inertia. -->
+<!-- The quadrotor. Mass, inertia, timestep, motor positions, motor lag and yaw torque are placeholders: they come
+     from the `dynamics` section of configs/env.yaml, written into the model when it is loaded (so config overrides
+     and the config saved with a trained model keep working). The geoms are for rendering only, drawn for 0.1 m arms:
+     contacts are off, and the explicit <inertial> means they add no mass or inertia. -->
 <mujoco model="quadrotor">
   <option timestep="0.002" gravity="0 0 -9.81" integrator="Euler">
     <flag contact="disable"/>
@@ -41,6 +41,19 @@
       <geom type="cylinder" size="0.055 0.002" pos="0.0707 -0.0707 0.012" material="rotor"/>
       <geom type="cylinder" size="0.055 0.002" pos="-0.0707 0.0707 0.012" material="rotor"/>
       <geom type="cylinder" size="0.055 0.002" pos="-0.0707 -0.0707 0.012" material="rotor"/>
+      <!-- Motors, in the order front left, front right, back right, back left -->
+      <site name="motor0"/>
+      <site name="motor1"/>
+      <site name="motor2"/>
+      <site name="motor3"/>
     </body>
   </worldbody>
+
+  <actuator>
+    <!-- Control and force are thrust in N, through a first-order lag; gear: thrust along body z + yaw reaction torque -->
+    <general site="motor0" dyntype="filter" dynprm="1" gear="0 0 1 0 0 0"/>
+    <general site="motor1" dyntype="filter" dynprm="1" gear="0 0 1 0 0 0"/>
+    <general site="motor2" dyntype="filter" dynprm="1" gear="0 0 1 0 0 0"/>
+    <general site="motor3" dyntype="filter" dynprm="1" gear="0 0 1 0 0 0"/>
+  </actuator>
 </mujoco>
