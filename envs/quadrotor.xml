@@ -1,0 +1,14 @@
+<!-- The quadrotor. Mass, inertia and timestep are placeholders: they come from the `dynamics` section of
+     configs/env.yaml, written into the model when it is loaded (so config overrides and the config saved with
+     a trained model keep working). -->
+<mujoco model="quadrotor">
+  <option timestep="0.002" gravity="0 0 -9.81" integrator="Euler">
+    <flag contact="disable"/>
+  </option>
+  <worldbody>
+    <body name="quad">
+      <freejoint/>
+      <inertial pos="0 0 0" mass="1" diaginertia="0.01 0.01 0.01"/>
+    </body>
+  </worldbody>
+</mujoco>
