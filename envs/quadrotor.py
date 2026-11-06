@@ -7,7 +7,7 @@ State, stored in MuJoCo's free joint:
     w   angular velocity, body frame [rad/s]                 qvel[3:6]
 
 Control: collective thrust and body rates -> rate controller -> mixer -> four motors, each with a first-order lag and
-a thrust limit. When the motors can't deliver everything, the priority is roll and pitch, then collective, then yaw.
+a thrust limit. When the motors can't deliver everything, the priority is collective, then roll and pitch, then yaw.
 
 Simplifications:
     - Motor thrust is commanded directly: no battery, propeller or motor speed model, no rotor inertia.
@@ -114,39 +114,31 @@ class Quadrotor:
     def thrust_acc(self, value):
         self.data.act[:] = self.m * value / 4
 
+    def _fit(self, motors, differential):
+        """`differential` scaled down just enough that motors + differential stays between 0 and max_motor_thrust, and
+        whether it had to be."""
+        room = np.maximum(np.where(differential > 0, self.max_motor_thrust - motors, motors), 0.0)
+        needed = np.abs(differential)
+        if not np.any(needed > room):
+            return differential, False
+        return differential * np.min(room[needed > 0] / needed[needed > 0]), True
+
     def _mix(self, thrust, torque):
         """Motor thrust commands [N] for a collective thrust [N] and a body torque [N m], each motor between 0 and
-        max_motor_thrust. When they don't all fit, the priority is roll and pitch, then collective, then yaw, similar
-        to PX4's roll/pitch airmode. Yaw comes last because it is weak: a small yaw error asks for large thrust
-        differences, and would otherwise take the range the other axes need.
+        max_motor_thrust. When they don't all fit, the priority is collective, then roll and pitch, then yaw:
+        - Collective comes first so that the policy's thrust command is what the motors deliver. Raising it to make
+          room for torque instead makes noisy rate commands add lift (hover has more room up than down), so a policy
+          trained with exploration noise learns to rely on that lift and falls without it.
+        - The price is that torque depends on thrust: the most is at 2x hover, and there is none at zero thrust.
+        - Yaw comes last because it is weak: a small yaw error asks for large thrust differences.
 
-        self.saturation: the highest priority that wasn't delivered as asked. 0 = none, 1 = yaw, 2 = collective,
-        3 = roll and pitch."""
-        limit = self.max_motor_thrust
-        self.saturation = 0
-
-        # Roll and pitch: scaled down if too large, which keeps the axis of rotation
-        roll_pitch = self.torque_to_motors[:, :2] @ torque[:2]
-        spread = roll_pitch.max() - roll_pitch.min()
-        if spread > limit:
-            roll_pitch = roll_pitch * limit / spread
-            self.saturation = 3
-
-        # Collective: moved as little as needed to fit roll and pitch
-        per_motor = np.clip(thrust / 4, -roll_pitch.min(), limit - roll_pitch.max())
-        if per_motor != thrust / 4 and self.saturation == 0:
-            self.saturation = 2
-        motors = per_motor + roll_pitch
-
-        # Yaw: scaled down to the range that is left on the motors it pushes up or down
-        yaw = self.torque_to_motors[:, 2] * torque[2]
-        if torque[2] != 0:
-            room = np.where(yaw > 0, limit - motors, motors)
-            needed = np.abs(yaw)
-            if np.any(needed > room):
-                yaw = yaw * max(0.0, np.min(room / needed))
-                self.saturation = self.saturation or 1
-        return np.clip(motors + yaw, 0.0, limit)  # the clip only removes rounding errors
+        self.saturation: the highest priority that had to be reduced. 0 = none, 1 = yaw, 2 = roll and pitch."""
+        motors = np.full(4, thrust / 4)
+        roll_pitch, roll_pitch_reduced = self._fit(motors, self.torque_to_motors[:, :2] @ torque[:2])
+        motors = motors + roll_pitch
+        yaw, yaw_reduced = self._fit(motors, self.torque_to_motors[:, 2] * torque[2])
+        self.saturation = 2 if roll_pitch_reduced else int(yaw_reduced)
+        return np.clip(motors + yaw, 0.0, self.max_motor_thrust)  # the clip only removes rounding errors
 
     def step(self, thrust_acc_cmd, rate_cmd):
         """One physics step. thrust_acc_cmd: collective thrust / mass [m/s^2]. rate_cmd: body rates [rad/s]."""
@@ -180,4 +172,4 @@ if __name__ == "__main__":
     quad.reset(p=[0, 0, 2])
     for _ in range(int(2 * np.pi / 10.0 / quad.dt)):  # roll at 10 rad/s for one revolution
         quad.step(G, np.array([10.0, 0, 0]))
-    print(f"one roll rev: body z-axis world z = {quad.R[2, 2]:.2f} (expect ~1, slightly less from controller lag)")
+    print(f"one roll rev: body z-axis world z = {quad.R[2, 2]:.2f} (expect ~0.8: the motor lag delays the roll)")

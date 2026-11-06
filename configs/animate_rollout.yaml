@@ -15,4 +15,4 @@ scripted:
   att_gain: 8.0           # 1/s, body rate per unit of attitude error
   flip_climb_time: 0.08   # s at full thrust before rolling; motors at full thrust can't start a roll quickly, so a
                           #   longer climb overshoots the start point by metres
-  flip_thrust: -0.2       # action thrust while rolling (slightly below hover)
+  flip_thrust: 0.2        # action thrust while rolling (above hover: the motors make more torque there)

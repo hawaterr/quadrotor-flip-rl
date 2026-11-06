@@ -126,7 +126,7 @@ def rollout(env, policy, seed):
     log = {"p": [], "q": [], "R": [], "r": [], "dist": [], "revs": [], "done": [], "thrust": [],
            "thrust_cmd": [], "rate_cmd": [], "w": [], "speed": [], "mass": env.quad.m, "task": env.task,
            "action_change": [],  # sum over the 4 commands of |a - previous a|; large = chattering
-           "saturation": [],  # Quadrotor.saturation at the end of each step (0 none, 1 yaw, 2 collective, 3 roll/pitch)
+           "saturation": [],  # Quadrotor.saturation at the end of each step (0 none, 1 yaw reduced, 2 roll/pitch reduced)
            "infer_ms": []}  # wall-clock time of each policy call (one action from one observation)
     total = 0.0
 
@@ -176,8 +176,8 @@ def print_summary(log, env):
     print(f"last {SETTLE_WINDOW} s: mean dist={np.mean(log['dist'][-tail:]):.3f}  "
           f"mean speed={np.mean(log['speed'][-tail:]):.2f}  final speed={log['speed'][-1]:.2f}")
     saturation = np.array(log["saturation"])
-    print(f"motor limits, share of steps: yaw reduced {100 * np.mean(saturation == 1):.0f}%, collective changed "
-          f"{100 * np.mean(saturation == 2):.0f}%, roll/pitch reduced {100 * np.mean(saturation == 3):.0f}%")
+    print(f"motor limits, share of steps: yaw reduced {100 * np.mean(saturation == 1):.0f}%, "
+          f"roll/pitch reduced {100 * np.mean(saturation == 2):.0f}%")
     # The first call is excluded: it includes one-off warm-up (lazy init, memory allocation)
     infer_ms = log["infer_ms"]
     steady = np.array(infer_ms[1:] or infer_ms)

@@ -18,7 +18,6 @@ batch_size: 2048
 gamma: 0.98               # discount per 0.02 s step (env.policy_dt): a ~1 s horizon
 learning_rate: 3e-4
 ent_coef: 0.0             # entropy bonus
-log_std_init: -1.6        # log of the starting exploration std of each action (-1.6: std 0.2). Noisy rate commands
-                          #   push the mixer to raise collective thrust (hover has more room up than down), so with
-                          #   much more noise the policy learns to rely on that lift and falls in evaluation
+log_std_init: -1.6        # log of the starting exploration std of each action (-1.6: std 0.2). The default std of
+                          #   1 is +-15 rad/s of rate noise, so the motor limits would cut torque on most steps
 net_arch: [128, 128]      # hidden layers of the policy and value networks
