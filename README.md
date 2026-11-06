@@ -37,7 +37,9 @@ TD-MPC2 learns the flip with about 9× fewer env steps. PPO needs far more env s
 
 Total episode reward is the sum of the per-step rewards over one evaluation episode (no discounting), averaged over 5 fixed starts. The table uses each run's last evaluation (TD-MPC2's is at 195k steps).
 
-These results were produced with the original hand-written simulator (git tag `custom-sim-v1`). The simulator now runs on MuJoCo with the same dynamics: the saved PPO and TD-MPC2 (no plan) models score within 0.01 of their old total episode reward. TD-MPC2 with MPPI is too sensitive to small changes to compare this closely.
+The table and learning curves were produced with the original hand-written simulator (git tag `custom-sim-v1`). The simulator now runs on MuJoCo with the same dynamics: the saved PPO and TD-MPC2 (no plan) models score within 0.01 of their old total episode reward. TD-MPC2 with MPPI is too sensitive to small changes to compare this closely.
+
+The GIFs replay the same models on MuJoCo, from rest. The MPPI GIF is one episode (seed 0, total reward 193), which is at the high end for MPPI: 12 episodes from the same start, differing only in MPPI's random samples, gave 171 ± 16 (range 149 to 193).
 
 Inference time is the wall-clock time to compute one action from one observation, on a laptop CPU (Intel i7-1065G7, PyTorch CPU build, batch size 1).
 

@@ -1,4 +1,4 @@
-"""Run one episode of any policy on QuadEnv and animate it: 3D view plus command and attitude plots.
+"""Run one episode of any policy on QuadEnv and animate it: MuJoCo view plus command and attitude plots.
 
 The policy name also picks the task: <name>_flip runs the flip env, everything else the hover env.
 Settings: configs/animate_rollout.yaml; override any of them as key=value.
@@ -13,23 +13,29 @@ Settings: configs/animate_rollout.yaml; override any of them as key=value.
     python animate_rollout.py policy=tdmpc2_flip plan=false    # same agent, policy prior only (no MPPI)
     python animate_rollout.py policy=ppo_flip_v1        # any model file in models/ named ppo_* or tdmpc2_*
     python animate_rollout.py save=plots/flip.gif       # also save the animation
-    python animate_rollout.py plots=false               # 3D view alone (no plots or text), as in the README
+    python animate_rollout.py plots=false               # MuJoCo view alone (no plots or text), as in the README
+
+Without a display, set MUJOCO_GL=egl.
 """
 import os
 import time
 
 import matplotlib.pyplot as plt
+import mujoco
 import numpy as np
+import torch
 from matplotlib.animation import FuncAnimation
+from PIL import Image
 
 from configs import TASKS, Config, load_config, load_env
 from envs.evaluation import SETTLE_WINDOW
 from envs.quad_env import QuadEnv
 from envs.quadrotor import G
 
-ARM = 0.15  # visual arm length [m]
-ARM_TIPS = ARM * np.array([[1, 1, 0], [-1, -1, 0], [1, -1, 0], [-1, 1, 0]]) / np.sqrt(2)  # body frame, X configuration
-ARROW_PER_HOVER = 0.3  # thrust arrow length [m] at hover thrust (m*g)
+ARROW_PER_HOVER = 0.12  # thrust arrow length [m] at hover thrust (m*g)
+VIEW_SIZE = {True: (400, 800), False: (500, 500)}  # (height, width) in pixels, with / without the plots
+CAMERA_AZIMUTH = 205.0    # deg; 180 looks along -x, the roll axis, so the flip is seen face-on, from the front
+CAMERA_ELEVATION = -12.0  # deg, looking slightly down
 FRAME_DT = 0.02  # s per animation frame (50 fps); frames are picked so playback is about real time
 BASELINES = ["zero", "hover", "random"] + [f"scripted_{task}" for task in TASKS]
 MODEL_FILES = {"ppo_": ".zip", "tdmpc2_": ".pt"}  # trained models in models/: name prefix -> file extension
@@ -55,7 +61,6 @@ def task_of(policy):
 def env_config_for(policy):
     """Trained models run in the env they were trained in (saved with the model); baselines use env.yaml."""
     if policy.startswith("tdmpc2_"):
-        import torch
         return Config(torch.load(f"models/{policy}.pt", weights_only=False)["env_cfg"])
     if policy.startswith("ppo_"):
         from ppo.train_ppo import saved_env_config
@@ -115,8 +120,10 @@ def make_policy(name, env, plan=True, scripted=None):
 def rollout(env, policy, seed):
     """Log the state at t = 0 (after reset) and after every step. Commands are logged per step and held over
     the step that follows, so index i of every series is time i * policy_dt."""
+    torch.manual_seed(seed)
+    np.random.seed(seed)  # MPPI samples, so an episode is only repeatable if these are seeded too
     obs, _ = env.reset(seed=seed, options={"exact": True})
-    log = {"p": [], "R": [], "r": [], "dist": [], "revs": [], "done": [], "thrust": [],
+    log = {"p": [], "q": [], "R": [], "r": [], "dist": [], "revs": [], "done": [], "thrust": [],
            "thrust_cmd": [], "rate_cmd": [], "w": [], "speed": [], "mass": env.quad.m, "task": env.task,
            "action_change": [],  # sum over the 4 commands of |a - previous a|; large = chattering
            "infer_ms": []}  # wall-clock time of each policy call (one action from one observation)
@@ -125,6 +132,7 @@ def rollout(env, policy, seed):
     def record():
         q = env.quad
         log["p"].append(q.p.copy())
+        log["q"].append(q.q.copy())
         log["R"].append(q.R.copy())
         log["r"].append(total)
         log["dist"].append(np.linalg.norm(q.p - env.target))
@@ -172,41 +180,62 @@ def print_summary(log, env):
           f"first call={infer_ms[0]:.1f} ms  (control period {1000 * env.policy_dt:.0f} ms)")
 
 
-def _setup_3d_view(P, plots):
-    """Figure with the 3D view sized to the trajectory P. Returns (fig, 3D axes, grid for the panels below it, or
-    None without plots)."""
+def _camera(model, P):
+    """Fixed camera that keeps the whole trajectory P in view."""
+    camera = mujoco.MjvCamera()
+    camera.lookat = (P.min(0) + P.max(0)) / 2
+    half = max(np.ptp(P, 0).max() / 2 + 0.25, 0.6)
+    camera.distance = half / np.tan(np.radians(model.vis.global_.fovy) / 2)
+    camera.azimuth, camera.elevation = CAMERA_AZIMUTH, CAMERA_ELEVATION
+    return camera
+
+
+def _add_connector(scene, kind, width, start, end, rgba):
+    """Add a line-like geom (the trail, the thrust arrow) to a scene that is about to be rendered."""
+    geom = scene.geoms[scene.ngeom]
+    mujoco.mjv_initGeom(geom, kind, np.zeros(3), np.zeros(3), np.eye(3).flatten(), np.array(rgba, np.float32))
+    mujoco.mjv_connector(geom, kind, width, start, end)
+    scene.ngeom += 1
+
+
+def render_frames(log, model, height, width):
+    """Replay the logged states in MuJoCo, one image per state, with the trail so far and the thrust arrow (along
+    body z, length proportional to thrust force)."""
+    P = np.array(log["p"])
+    data = mujoco.MjData(model)
+    camera = _camera(model, P)
+    hover_force = log["mass"] * G
+    renderer = mujoco.Renderer(model, height, width)
+    frames = []
+    for i, (p, q) in enumerate(zip(P, log["q"])):
+        data.qpos[:3], data.qpos[3:7] = p, q
+        mujoco.mj_forward(model, data)
+        renderer.update_scene(data, camera)
+        for start, end in zip(P[:i], P[1:i + 1]):
+            _add_connector(renderer.scene, mujoco.mjtGeom.mjGEOM_CAPSULE, 0.006, start, end, (0.25, 0.3, 0.4, 0.6))
+        tip = p + log["R"][i] @ [0, 0, ARROW_PER_HOVER * log["thrust"][i] / hover_force]
+        _add_connector(renderer.scene, mujoco.mjtGeom.mjGEOM_ARROW, 0.012, p, tip, (0.1, 0.35, 0.9, 1.0))
+        frames.append(renderer.render())
+    renderer.close()  # explicitly: freeing the GL context at interpreter exit raises an error with EGL
+    return frames
+
+
+def _setup_view(height, width, plots):
+    """Figure with axes for the MuJoCo view. Returns (fig, axes, grid for the panels below it, or None without
+    plots)."""
     if plots:
         fig = plt.figure(figsize=(9, 11))
-        gs = fig.add_gridspec(5, 2, height_ratios=[4, 1, 1, 1, 1], hspace=0.25, wspace=0.3)
-        ax = fig.add_subplot(gs[0, :], projection="3d")
+        gs = fig.add_gridspec(5, 2, height_ratios=[4, 1, 1, 1, 1], hspace=0.25, wspace=0.3, top=0.98)
+        ax = fig.add_subplot(gs[0, :])
     else:
-        fig, gs = plt.figure(figsize=(5, 5)), None
-        ax = fig.add_axes([0, 0, 1, 1], projection="3d")
-    c, half = P.mean(0), max(np.ptp(P, 0).max() / 2 + 0.5, 1.0)
-    ax.set_xlim(c[0] - half, c[0] + half); ax.set_ylim(c[1] - half, c[1] + half)
-    ax.set_zlim(max(0, c[2] - half), c[2] + half)
-    if plots:
-        ax.set_xlabel("x"); ax.set_ylabel("y"); ax.set_zlabel("z")
-    else:
-        # Keep the grid for depth, drop the numbers
-        ax.set_xticklabels([]); ax.set_yticklabels([]); ax.set_zticklabels([])
+        fig, gs = plt.figure(figsize=(width / 100, height / 100), dpi=100), None
+        ax = fig.add_axes([0, 0, 1, 1])
+    ax.axis("off")
     return fig, ax, gs
 
 
-def _drone_artists(ax):
-    """Empty artists, filled in every frame: the two arms, a front marker, the trail, the status text and the
-    thrust arrow."""
-    arm1, = ax.plot([], [], [], "k-", lw=3)
-    arm2, = ax.plot([], [], [], "k-", lw=3)
-    front, = ax.plot([], [], [], "ro", ms=3)          # marks one arm so you can see rotation
-    trail, = ax.plot([], [], [], "-", color="gray", alpha=0.5)
-    text = ax.text2D(0.02, 0.95, "", transform=ax.transAxes)
-    arrow, = ax.plot([], [], [], "b-o", lw=2, ms=3, markevery=[1])  # thrust arrow (a line, so it can be blitted)
-    return arm1, arm2, front, trail, text, arrow
-
-
 def _plot_series(log, P):
-    """The time series shown under the 3D view, as arrays indexed by time step."""
+    """The time series shown under the MuJoCo view, as arrays indexed by time step."""
     series = {"thrust_cmd": np.array(log["thrust_cmd"]), "thrust": np.array(log["thrust"]),
               "rate_cmd": np.array(log["rate_cmd"]), "w": np.array(log["w"]), "z": P[:, 2]}
     # ZYX Euler angles, unwrapped so a flip reads as a smooth 0 -> 360 deg instead of jumping at +-180
@@ -219,7 +248,7 @@ def _plot_series(log, P):
 
 
 def _add_panels(fig, gs, series, T, hover_force):
-    """Panels under the 3D view, sharing one time axis T. Left column: commands (dashed) vs actual (solid) for
+    """Panels under the MuJoCo view, sharing one time axis T. Left column: commands (dashed) vs actual (solid) for
     thrust and the body rates. Right column: height and the attitude angles.
     Returns [(line, series name, column or None)], the lines to draw up to the current time in each frame."""
     # (grid cell, y label, colour, [(series, column, style, legend label)])
@@ -253,43 +282,51 @@ def _add_panels(fig, gs, series, T, hover_force):
     return lines
 
 
+def _save_gif(fig, update, frames, path):
+    """Save with one palette for all frames and no dithering: Pillow's default dithers each frame differently,
+    which makes the GIF about 20x larger. The palette comes from the last frame, where everything is drawn; octree
+    because median cut, the default, spends it on the background and washes out the red arms and blue arrow."""
+    images = []
+    for i in frames:
+        update(i)
+        fig.canvas.draw()
+        images.append(Image.fromarray(np.asarray(fig.canvas.buffer_rgba())).convert("RGB"))
+    palette = images[-1].quantize(colors=256, method=Image.Quantize.FASTOCTREE, dither=Image.Dither.NONE)
+    images = [image.quantize(palette=palette, dither=Image.Dither.NONE) for image in images]
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    images[0].save(path, save_all=True, append_images=images[1:], duration=round(FRAME_DT * 1000), loop=0)
+    print(f"saved {path}")
+
+
 def _play(fig, update, n_states, policy_dt, start_pause, save):
     """Animate at about real time, after saving to `save` (a path) if given."""
     hold = [0] * round(start_pause / FRAME_DT)  # repeat t = 0 so the starting position is easy to see
     frames = hold + list(range(0, n_states, max(1, round(FRAME_DT / policy_dt))))
-    anim = FuncAnimation(fig, update, frames=frames, interval=FRAME_DT * 1000, blit=True)
     if save:
-        os.makedirs(os.path.dirname(save) or ".", exist_ok=True)
-        anim.save(save, writer="pillow", fps=round(1 / FRAME_DT))
-        print(f"saved {save}")
+        _save_gif(fig, update, frames, save)
+    anim = FuncAnimation(fig, update, frames=frames, interval=FRAME_DT * 1000, blit=True)
     plt.show()
+    return anim  # FuncAnimation stops if it is garbage collected
 
 
-def animate(log, policy_dt, save=None, start_pause=0.0, plots=True):
-    """start_pause: seconds to hold the first frame (t = 0) before playing.
-    plots: False draws the 3D view alone, with no plots, status text or axis labels."""
+def animate(log, model, policy_dt, save=None, start_pause=0.0, plots=True):
+    """model: the MjModel to render with. start_pause: seconds to hold the first frame (t = 0) before playing.
+    plots: False draws the MuJoCo view alone, with no plots or status text."""
     P = np.array(log["p"])
     T = np.arange(len(P)) * policy_dt
     hover_force = log["mass"] * G
-    fig, ax, gs = _setup_3d_view(P, plots)
-    arm1, arm2, front, trail, text, arrow = _drone_artists(ax)
+    height, width = VIEW_SIZE[plots]
+    frames = render_frames(log, model, height, width)
+    fig, ax, gs = _setup_view(height, width, plots)
+    image = ax.imshow(frames[0])
+    text = ax.text(0.01, 0.97, "", transform=ax.transAxes, va="top", fontsize=9)
     series = _plot_series(log, P)
     lines = _add_panels(fig, gs, series, T, hover_force) if plots else []
 
     def update(i):
-        p, R = P[i], log["R"][i]
-        tips = p + ARM_TIPS @ R.T
-        arm1.set_data_3d(*tips[[0, 1]].T)
-        arm2.set_data_3d(*tips[[2, 3]].T)
-        front.set_data_3d(*tips[[0]].T)
-
-        # Thrust arrow: along body z, length proportional to thrust force
-        F = log["thrust"][i]
-        d = R @ [0, 0, ARROW_PER_HOVER * F / hover_force]
-        arrow.set_data_3d(*np.array([p, p + d]).T)
-
-        trail.set_data_3d(*P[: i + 1].T)
+        image.set_data(frames[i])
         if plots:
+            F = log["thrust"][i]
             flip = f"  revs={log['revs'][i]:.2f}  flip_done={log['done'][i]}" if log["task"] == "flip" else ""
             text.set_text(f"t={i * policy_dt:.2f}s  dist to target={log['dist'][i]:.2f} m{flip}\n"
                           f"thrust={F:.1f} N ({F / hover_force:.2f}x hover)  reward={log['r'][i]:.1f}")
@@ -297,7 +334,7 @@ def animate(log, policy_dt, save=None, start_pause=0.0, plots=True):
             y = series[key][: i + 1]
             line.set_data(T[: i + 1], y if col is None else y[:, col])
         # Everything that changes, so blitting redraws only these instead of the whole figure
-        return arm1, arm2, front, trail, text, arrow, *(line for line, _, _ in lines)
+        return image, text, *(line for line, _, _ in lines)
 
     _play(fig, update, len(P), policy_dt, start_pause, save)
 
@@ -310,4 +347,4 @@ if __name__ == "__main__":
     env = QuadEnv(cfg=env_config_for(cfg.policy))
     log = rollout(env, make_policy(cfg.policy, env, plan=cfg.plan, scripted=cfg.scripted), cfg.seed)
     print_summary(log, env)
-    animate(log, env.policy_dt, cfg.save, cfg.start_pause, cfg.plots)
+    animate(log, env.quad.model, env.policy_dt, cfg.save, cfg.start_pause, cfg.plots)

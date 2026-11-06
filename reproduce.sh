@@ -12,6 +12,7 @@ cd "$(dirname "$0")"
 SEEDS=(0 1 2)
 OUT=${OUT:-docs}
 export MPLBACKEND=Agg  # save the GIFs without opening a window
+export MUJOCO_GL=egl   # render them without a display
 
 if [[ "${1:-}" != "--skip-training" ]]; then
   for i in "${SEEDS[@]}"; do
