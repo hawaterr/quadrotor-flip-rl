@@ -37,6 +37,8 @@ TD-MPC2 learns the flip with about 9× fewer env steps. PPO needs far more env s
 
 Total episode reward is the sum of the per-step rewards over one evaluation episode (no discounting), averaged over 5 fixed starts. The table uses each run's last evaluation (TD-MPC2's is at 195k steps).
 
+These results were produced with the original hand-written simulator (git tag `custom-sim-v1`). The simulator now runs on MuJoCo with the same dynamics: the saved PPO and TD-MPC2 (no plan) models score within 0.01 of their old total episode reward. TD-MPC2 with MPPI is too sensitive to small changes to compare this closely.
+
 Inference time is the wall-clock time to compute one action from one observation, on a laptop CPU (Intel i7-1065G7, PyTorch CPU build, batch size 1).
 
 ## Setup
@@ -51,7 +53,7 @@ pip install torch==2.14.1 --index-url https://download.pytorch.org/whl/cpu
 pip install -r requirements.txt
 
 # check that everything imports
-python -c "import gymnasium, stable_baselines3, torch, matplotlib; print('ok', torch.__version__)"
+python -c "import gymnasium, mujoco, stable_baselines3, torch, matplotlib; print('ok', torch.__version__)"
 ```
 
 ## Usage
