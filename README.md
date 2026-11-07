@@ -4,7 +4,7 @@ Teaching a simulated quadrotor to do a flip with reinforcement learning: one rol
 
 ## Results
 
-TD-MPC2 is shown twice: acting with MPPI planning (the actual algorithm), and with its learned policy alone (no planning, same model).
+TD-MPC2 is shown twice: acting with MPPI planning (the actual algorithm), and with its learned policy alone (no planning, same model). The blue arrow is the collective thrust.
 
 <table>
   <tr><th>PPO</th><th>TD-MPC2 (MPPI)</th><th>TD-MPC2 (no plan)</th></tr>
@@ -32,7 +32,7 @@ Each algorithm was trained with 3 seeds. The curves show the mean over the seeds
 
 TD-MPC2 learns the flip with about 9× fewer env steps. PPO needs far more env steps but much less wall-clock time, finishes with a higher total episode reward.
 
-Total episode reward is the sum of the per-step rewards over one evaluation episode (no discounting), averaged over 5 fixed starts. The table uses each run's last evaluation (TD-MPC2's is at 195k steps).
+Total episode reward is the sum of the per-step rewards over one evaluation episode (no discounting), averaged over 5 fixed starts.
 
 Inference time is the wall-clock time to compute one action from one observation, on a laptop CPU (Intel i7-1065G7, PyTorch CPU build, batch size 1).
 
