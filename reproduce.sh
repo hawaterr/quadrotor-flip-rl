@@ -2,7 +2,7 @@
 # Reproduce the README results: train both algorithms on 3 seeds, then the learning curves and the GIFs (seed 0).
 # Run from anywhere, with the venv from the README's Setup active.
 #
-#   ./reproduce.sh                   # everything: ~1 h of PPO + ~10 h of TD-MPC2 on a laptop CPU
+#   ./reproduce.sh                   # everything: ~1 h of PPO + ~7.5 h of TD-MPC2 on a laptop CPU
 #   ./reproduce.sh --skip-training   # only the figure and GIFs, from the models already in models/
 #
 # OUT=<dir> writes the figure and GIFs there instead of docs/.
@@ -17,7 +17,7 @@ export MUJOCO_GL=egl   # render them without a display
 if [[ "${1:-}" != "--skip-training" ]]; then
   for i in "${SEEDS[@]}"; do
     python -m ppo.train_ppo train_seed="$i" name="ppo_flip_seed$i"            # ~23 min each
-    python -m tdmpc2.train_tdmpc2 train_seed="$i" name="tdmpc2_flip_seed$i"   # ~3.4 h each
+    python -m tdmpc2.train_tdmpc2 train_seed="$i" name="tdmpc2_flip_seed$i"   # ~2.5 h each
   done
 fi
 

@@ -10,8 +10,8 @@ TD-MPC2 is shown twice: acting with MPPI planning (the actual algorithm), and wi
   <tr><th>PPO</th><th>TD-MPC2 (MPPI)</th><th>TD-MPC2 (no plan)</th></tr>
   <tr>
     <td><img src="docs/ppo_flip.gif" alt="PPO: flip, fly back to the start point and hover"></td>
-    <td><img src="docs/tdmpc2_flip.gif" alt="TD-MPC2 with MPPI: flip, then hover near the start point, still drifting slightly"></td>
-    <td><img src="docs/tdmpc2_flip_no_plan.gif" alt="TD-MPC2 policy alone: flip, fly back towards the start point and hover"></td>
+    <td><img src="docs/tdmpc2_flip.gif" alt="TD-MPC2 with MPPI: flip, then wander near the start point, ending the episode tilted"></td>
+    <td><img src="docs/tdmpc2_flip_no_plan.gif" alt="TD-MPC2 policy alone: flip, then hover about 0.35 m from the start point"></td>
   </tr>
 </table>
 
@@ -23,25 +23,42 @@ Each algorithm was trained with 3 seeds. The curves show the mean over the seeds
 
 | | PPO | TD-MPC2 (MPPI) | TD-MPC2 (no plan) |
 |---|---|---|---|
-| Total episode reward | 204 | 173 | 194 |
-| Final distance to start point | 0.07 m | 0.13 m | 0.14 m |
-| Speed, last 0.5 s | 0.001 m/s | 0.14 m/s | 0.009 m/s |
-| Env steps to first reach total reward 150 | 475k | 75k | 70k |
-| Total episode reward, all 3 seeds (mean ± std) | 205 ± 1 | 184 ± 10 | 189 ± 6 |
-| Env steps to first reach 150, all 3 seeds (mean ± std) | 492k ± 14k | 58k ± 14k | 53k ± 15k |
-| Training steps / wall-clock time | 1M / 23 min | 200k / 3.4 h | (same run) |
+| Total episode reward | 198 | 133 | 167 |
+| Final distance to start point | 0.06 m | 0.25 m | 0.42 m |
+| Speed, last 0.5 s | 0.008 m/s | 0.62 m/s | 0.18 m/s |
+| Env steps to first reach total reward 150 | 450k | 190k | 85k |
+| Total episode reward, all 3 seeds (mean ± std) | 198 ± 1 | 127 ± 51 | 181 ± 13 |
+| Env steps to first reach 150, all 3 seeds (mean ± std) | 458k ± 38k | 108k ± 71k | 72k ± 12k |
+| Training steps / wall-clock time | 1M / 23 min | 200k / 2.5 h | (same run) |
 | Model size (trained parameters) | 40k | 331k | (same model) |
-| Inference time per step, median (p99) | 0.2 ms (0.5 ms) | 16 ms (20 ms) | 0.4 ms (0.5 ms) |
+| Inference time per step, median (p99) | 0.3 ms (0.8 ms) | 22 ms (27 ms) | 0.6 ms (1.3 ms) |
 
-TD-MPC2 learns the flip with about 9× fewer env steps. PPO needs far more env steps but much less wall-clock time, finishes with a higher total episode reward.
+TD-MPC2's learned policy reaches a total episode reward of 150 with about 6× fewer env steps than PPO. PPO needs much less wall-clock time, finishes with the highest total episode reward, and its 3 seeds are nearly identical.
+
+MPPI planning makes TD-MPC2 worse on this simulator: it scores below the learned policy alone on all 3 seeds. Without the motor model (git tag `custom-sim-v1`), the two were close:
+
+| Total episode reward, all 3 seeds | PPO | TD-MPC2 (MPPI) | TD-MPC2 (no plan) |
+|---|---|---|---|
+| Without the motor model | 205 ± 1 | 184 ± 10 | 189 ± 6 |
+| With the motor model | 198 ± 1 | 127 ± 51 | 181 ± 13 |
+
+The cause is not established. One lead, not yet tested: MPPI's actions change about 10× more from step to step than the policy's, and the motors can't deliver the requested roll and pitch torque on 55-78% of its steps, against 10-18% for the policy alone.
 
 Total episode reward is the sum of the per-step rewards over one evaluation episode (no discounting), averaged over 5 fixed starts. The table uses each run's last evaluation (TD-MPC2's is at 195k steps).
 
-The table and learning curves were produced with the original hand-written simulator (git tag `custom-sim-v1`). The simulator now runs on MuJoCo with the same dynamics: the saved PPO and TD-MPC2 (no plan) models score within 0.01 of their old total episode reward. TD-MPC2 with MPPI is too sensitive to small changes to compare this closely.
+Five starts are few for MPPI, so the final models were also run on 20 starts each. Mean ± std over the 3 seeds: PPO 199 ± 1, TD-MPC2 with MPPI 126 ± 30, TD-MPC2 with no plan 181 ± 11. All of them completed the flip every time. MPPI crashed in 35% of episodes on seed 1 and never on the other two seeds; PPO and the policy alone never crashed.
 
-The GIFs replay the same models on MuJoCo, from rest. The MPPI GIF is one episode (seed 0, total reward 193), which is at the high end for MPPI: 12 episodes from the same start, differing only in MPPI's random samples, gave 171 ± 16 (range 149 to 193).
+The GIFs show seed 0, from rest. The MPPI GIF (total reward 150) is the best of 12 episodes from the same start that differed only in MPPI's random samples, which gave 127 ± 13 (range 106 to 150).
 
-Inference time is the wall-clock time to compute one action from one observation, on a laptop CPU (Intel i7-1065G7, PyTorch CPU build, batch size 1).
+Inference time is the wall-clock time to compute one action from one observation, on a laptop CPU (Intel i7-1065G7, PyTorch CPU build, batch size 1). At 22 ms, MPPI takes slightly longer than the 20 ms control period on this CPU.
+
+## Simulator
+
+The drone is simulated in [MuJoCo](https://mujoco.org). The policy commands collective thrust and body rates at 50 Hz. A 500 Hz rate controller and a mixer turn these into thrust commands for four motors, each with a 30 ms lag and a 7.85 N limit.
+
+When the motors can't deliver everything, the priority is collective thrust, then roll and pitch, then yaw. This means thrust and roll torque compete during the flip: there is no torque at zero thrust, and the most is at twice hover thrust.
+
+Not modelled: drag, ground contact (episodes end above the floor), the battery, propeller speed and rotor inertia.
 
 ## Setup
 
@@ -81,7 +98,7 @@ There is also a `hover` task (hold a point, starting from a perturbed state). It
 
 ## Reproducing the results
 
-[reproduce.sh](reproduce.sh) trains both algorithms on 3 seeds (~11 h on a laptop CPU), then writes the figure and the GIFs (from seed 0) to `docs/`:
+[reproduce.sh](reproduce.sh) trains both algorithms on 3 seeds (~8.5 h on a laptop CPU), then writes the figure and the GIFs (from seed 0) to `docs/`:
 
 ```bash
 ./reproduce.sh                   # train, then figure and GIFs
