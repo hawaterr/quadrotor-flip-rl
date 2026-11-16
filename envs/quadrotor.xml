@@ -46,6 +46,8 @@
       <site name="motor1"/>
       <site name="motor2"/>
       <site name="motor3"/>
+      <!-- IMU at the centre of mass, aligned with the body axes -->
+      <site name="imu"/>
     </body>
   </worldbody>
 
@@ -56,4 +58,10 @@
     <general site="motor2" dyntype="filter" dynprm="1" gear="0 0 1 0 0 0"/>
     <general site="motor3" dyntype="filter" dynprm="1" gear="0 0 1 0 0 0"/>
   </actuator>
+
+  <sensor>
+    <!-- Ideal readings, body frame; envs/sensors.py adds bias and noise. Computed at the start of each mj_step -->
+    <gyro name="gyro" site="imu"/>                    <!-- body rates [rad/s] -->
+    <accelerometer name="accel" site="imu"/>          <!-- specific force [m/s^2]: +g on z when hovering -->
+  </sensor>
 </mujoco>

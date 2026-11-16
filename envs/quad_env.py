@@ -1,11 +1,19 @@
 """Gymnasium quadrotor environment with selectable task.
 
-    task="flip":  do one roll flip, then recover to level and fly back to the start point.
+    task="flip":  do one roll flip, then recover to a still, level hover at the start height.
     task="hover": hold a fixed target point, starting from a perturbed state (a quick sanity check).
 
 Action (4, in [-1, 1]): collective thrust, roll rate, pitch rate, yaw rate  -> scaled to CTBR.
     Thrust is centred on hover: a[0] = 0 -> thrust = g, so a zero-mean initial policy roughly hovers.
-Observation: the ground-truth state (no sensor noise or state estimation).
+
+Observation = [actor part, privileged part] (asymmetric actor-critic, ppo/asymmetric.py):
+    actor part (the first n_actor_obs entries): only what the real drone has (envs/sensors.py), so the policy can be
+        deployed: estimated gravity direction in body frame (3), then the last `history` frames, newest first, of
+        [noisy gyro (3), noisy accelerometer (3), action taken (4)]; flip only: + estimated roll progress (1) +
+        estimated flip done flag (1). No position, no velocity: the drone can't measure them.
+    privileged part: the ground-truth state, read only by the critic (training in sim): rotation matrix (9), body
+        rates (3), velocity (3), position error (3); flip only: + true roll progress (1) + true flip done flag (1).
+The reward is computed from the ground truth (training only).
 
 All settings (dynamics, episode length, limits, start noise, curriculum, reward weights) come from
 configs/env.yaml (configs.load_env).
@@ -16,6 +24,7 @@ from gymnasium import spaces
 
 from configs import load_env
 from envs.quadrotor import G, Quadrotor
+from envs.sensors import AttitudeEstimator, ImuModel, axis_angle_quat, quat_multiply
 
 # Observation scaling, to keep inputs roughly in [-1, 1]. Fixed, not a config setting: trained models
 # depend on it, so changing it would silently break them.
@@ -38,11 +47,14 @@ class QuadEnv(gym.Env):
         self.substeps = int(round(self.policy_dt / self.quad.dt))
         self.max_steps = int(self.cfg.episode_time / self.policy_dt)
         self.target = np.array(self.cfg.target, float)
+        self.imu = ImuModel(self.cfg.sensors)
+        self.estimator = AttitudeEstimator()
+        self.history_len = self.cfg.history
 
         self.action_space = spaces.Box(-1.0, 1.0, shape=(4,), dtype=np.float32)
-        # rot matrix (9) + body rates (3) + velocity (3) + position error (3) + previous action (4)
-        # flip only: + flip progress (1) + flip done flag (1)
-        n_obs = 22 + (2 if self.task == "flip" else 0)
+        flip_extra = 2 if self.task == "flip" else 0  # roll progress + flip done flag
+        self.n_actor_obs = 3 + 10 * self.history_len + flip_extra
+        n_obs = self.n_actor_obs + 18 + flip_extra
         self.observation_space = spaces.Box(-np.inf, np.inf, shape=(n_obs,), dtype=np.float32)
 
     def scale_action(self, a):
@@ -56,19 +68,30 @@ class QuadEnv(gym.Env):
         return thrust, rates
 
     def _obs(self):
-        q = self.quad
-        parts = [
-            q.R.flatten(),
-            q.w / W_SCALE,
-            q.v / V_SCALE,
-            (q.p - self.target) / POS_SCALE,
-            self.prev_action,
-        ]
+        q, est = self.quad, self.estimator
+        actor = [est.gravity_body, *self.history]
+        privileged = [q.R.flatten(), q.w / W_SCALE, q.v / V_SCALE, (q.p - self.target) / POS_SCALE]
         if self.task == "flip":
             # Attitude alone can't tell "before flip" from "after flip" (both upright),
             # so the agent needs to know how far it has rotated.
-            parts += [[self.roll_progress / (2 * np.pi)], [float(self.flip_done)]]
-        return np.concatenate(parts).astype(np.float32)
+            actor += [[est.roll_progress / (2 * np.pi)], [float(self.est_flip_done)]]
+            privileged += [[self.roll_progress / (2 * np.pi)], [float(self.flip_done)]]
+        return np.concatenate(actor + privileged).astype(np.float32)
+
+    def _push_frame(self, gyro, accel, action):
+        """Newest IMU reading and the action taken, at the front of the history."""
+        self.history.insert(0, np.concatenate([gyro / W_SCALE, accel / G, action]))
+        del self.history[self.history_len:]
+
+    def _read_imu(self):
+        """Noisy IMU readings, integrated by the attitude estimator."""
+        gyro, accel = self.imu.read(*self.quad.imu)
+        self.estimator.update(gyro, self.quad.dt)
+        return gyro, accel
+
+    def _update_est_flip_done(self):
+        if self.task == "flip":
+            self.est_flip_done |= self.estimator.roll_progress >= 2 * np.pi * self.cfg.reward.done_frac
 
     def reset(self, seed=None, options=None):
         """options={"exact": True} (used for evaluation): drop the minimum v/w spread, so a start with zero
@@ -84,6 +107,21 @@ class QuadEnv(gym.Env):
         self.best_progress = np.clip(self.roll_progress, 0, 2 * np.pi)
         self.prev_action = np.zeros(4)
         self.t = 0
+        self.z0 = self.quad.p[2]
+
+        # Sensors: the estimate starts from the true attitude with a small error (on the real drone: Betaflight's
+        # estimate when the flip is triggered)
+        rng = self.np_random
+        self.quad.forward()  # sensor readings for the start state
+        self.imu.reset(rng)
+        error = axis_angle_quat(rng.normal(0, self.cfg.sensors.att_init_std, 3))
+        self.estimator.reset(quat_multiply(self.quad.q, error), self.roll_progress)
+        self.est_flip_done = False
+        self._update_est_flip_done()
+        gyro, accel = self.imu.read(*self.quad.imu)
+        self.history = []
+        for _ in range(self.history_len):
+            self._push_frame(gyro, accel, self.prev_action)
         return self._obs(), {}
 
     def _random_start(self, exact):
@@ -121,6 +159,9 @@ class QuadEnv(gym.Env):
         for _ in range(self.substeps):
             self.quad.step(thrust, rates)
             self.roll_progress += self.quad.w[0] * self.quad.dt
+            gyro, accel = self._read_imu()
+        self._update_est_flip_done()
+        self._push_frame(gyro, accel, action)
         self.t += 1
 
         q = self.quad
@@ -164,10 +205,12 @@ class QuadEnv(gym.Env):
                 self.flip_done = True
                 reward += r.completion_bonus
         else:
-            # Recovery: be level, stop rotating, fly back to the target and stop there. The pull towards the
-            # target is positive and largest at the target, so recovering always beats crashing early.
+            # Recovery: be level, stop rotating, stop moving and hold the start height. Not "fly back to the start
+            # point": the drone can't measure its position. Both pulls are positive and largest at the goal, and
+            # still matter far from it, so recovering always beats crashing early.
             reward += r.upright * upright
-            reward += r.target * np.exp(-dist / r.target_scale)
+            reward += r.still * np.exp(-np.linalg.norm(q.v) / r.still_scale)
+            reward += r.height * np.exp(-abs(q.p[2] - self.z0) / r.height_scale)
             reward -= r.body_rate * np.linalg.norm(q.w)
             # Capped, so being fast right after the flip can't outweigh the positive terms (crashing would
             # then pay)

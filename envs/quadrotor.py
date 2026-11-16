@@ -9,6 +9,8 @@ State, stored in MuJoCo's free joint:
 Control: collective thrust and body rates -> rate controller -> mixer -> four motors, each with a first-order lag and
 a thrust limit. When the motors can't deliver everything, the priority is roll and pitch, then collective, then yaw.
 
+Sensors: an ideal gyro and accelerometer at the centre of mass (`imu`); noise and bias are added in envs/sensors.py.
+
 Simplifications:
     - Motor thrust is commanded directly: no battery, propeller or motor speed model, no rotor inertia.
     - No drag, no ground contact (episodes end above the floor).
@@ -36,7 +38,8 @@ class Quadrotor:
         offset = cfg.arm_length / np.sqrt(2)
         x, y = offset * np.array([1.0, 1, -1, -1]), offset * np.array([1.0, -1, -1, 1])
         yaw = cfg.yaw_torque_per_thrust * np.array([1.0, -1, 1, -1])
-        self.model.site_pos[:, 0], self.model.site_pos[:, 1] = x, y
+        motors = [mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SITE, f"motor{i}") for i in range(4)]
+        self.model.site_pos[motors, 0], self.model.site_pos[motors, 1] = x, y
         self.model.actuator_gear[:, 5] = yaw
         self.model.actuator_dynprm[:, 0] = cfg.thrust_tau
         mujoco.mj_setConst(self.model, mujoco.MjData(self.model))
@@ -104,6 +107,17 @@ class Quadrotor:
         out = np.empty(9)
         mujoco.mju_quat2Mat(out, self.data.qpos[3:7])
         return out.reshape(3, 3)
+
+    @property
+    def imu(self):
+        """Ideal IMU readings (body frame): gyro [rad/s], accelerometer specific force [m/s^2]. MuJoCo computes them
+        at the start of mj_step, so after a step they lag the state by one physics step (call forward() after
+        setting the state by hand)."""
+        return self.data.sensordata[:3].copy(), self.data.sensordata[3:6].copy()
+
+    def forward(self):
+        """Recompute the derived quantities (sensor readings) for the current state, without stepping."""
+        mujoco.mj_forward(self.model, self.data)
 
     @property
     def thrust_acc(self):
