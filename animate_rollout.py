@@ -153,13 +153,13 @@ def rollout(env, policy, seed):
         thrust_cmd, rate_cmd = env.scale_action(action)
         log["thrust_cmd"].append(env.quad.m * thrust_cmd)
         log["rate_cmd"].append(rate_cmd)
-        obs, r, term, trunc, _ = env.step(action)
+        obs, r, term, trunc, info = env.step(action)
         total += r
         log["saturation"].append(env.quad.saturation)
         record()
         if term or trunc:
             break
-    log["crashed"] = term
+    log["crashed"] = info["crashed"]
     # Repeat the last command so commands line up with the states (it is held until the end)
     log["thrust_cmd"].append(log["thrust_cmd"][-1])
     log["rate_cmd"].append(log["rate_cmd"][-1])

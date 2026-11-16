@@ -33,7 +33,7 @@ def evaluate(env, act, seeds):
             if term or trunc:
                 break
         rows.append({"return": total, "final_dist": dist[-1],
-                     "settle_speed": float(np.mean(speed[-tail:])), "crashed": float(term)})
+                     "settle_speed": float(np.mean(speed[-tail:])), "crashed": float(info["crashed"])})
     np.random.set_state(np_state)
     torch.set_rng_state(torch_state)
     return {k: float(np.mean([row[k] for row in rows])) for k in rows[0]}

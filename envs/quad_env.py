@@ -1,7 +1,7 @@
 """Gymnasium quadrotor environment with selectable task.
 
-    task="flip":  do one roll flip, then recover to level, not rotating, slow, near the start height; then the pilot
-                  takes over (on IMU alone the drone can't hold its position).
+    task="flip":  do one roll flip, then recover to level, not rotating, slow, roughly back at the start point; then
+                  the pilot takes over (on IMU alone the drone can't hold its position for long).
     task="hover": hold a fixed target point, starting from a perturbed state (a quick sanity check).
 
 Action (4, in [-1, 1]): collective thrust, roll rate, pitch rate, yaw rate  -> scaled to CTBR.
@@ -9,12 +9,17 @@ Action (4, in [-1, 1]): collective thrust, roll rate, pitch rate, yaw rate  -> s
 
 Observation = [actor part, privileged part] (asymmetric actor-critic, ppo/asymmetric.py):
     actor part (the first n_actor_obs entries): only what the real drone has (envs/sensors.py), so the policy can be
-        deployed: estimated gravity direction in body frame (3), then the last `history` frames, newest first, of
-        [noisy gyro (3), noisy accelerometer (3), action taken (4)]; flip only: + estimated roll progress (1) +
-        estimated flip done flag (1). No position, no velocity: the drone can't measure them.
+        deployed: estimated gravity direction in body frame (3), elapsed share of the episode (1; the ESP32 knows
+        when it started the flip), then the last `history` frames, newest first, of [noisy gyro (3), noisy
+        accelerometer (3), action taken (4)]; flip only: + estimated roll progress (1) + estimated flip done flag (1).
+        No position, no velocity: the drone can't measure them.
     privileged part: the ground-truth state, read only by the critic (training in sim): rotation matrix (9), body
         rates (3), velocity (3), position error (3); flip only: + true roll progress (1) + true flip done flag (1).
 The reward is computed from the ground truth (training only).
+
+Flip episodes end at the handover (episode_time): the pilot takes over, so it is a true end of the task (terminated,
+not truncated: no value bootstrapped beyond it), with a bonus for being back at the start point. info["crashed"] tells
+a crash from a handover.
 
 All settings (dynamics, episode length, limits, start noise, curriculum, reward weights) come from
 configs/env.yaml (configs.load_env).
@@ -54,7 +59,7 @@ class QuadEnv(gym.Env):
 
         self.action_space = spaces.Box(-1.0, 1.0, shape=(4,), dtype=np.float32)
         flip_extra = 2 if self.task == "flip" else 0  # roll progress + flip done flag
-        self.n_actor_obs = 3 + 10 * self.history_len + flip_extra
+        self.n_actor_obs = 4 + 10 * self.history_len + flip_extra
         n_obs = self.n_actor_obs + 18 + flip_extra
         self.observation_space = spaces.Box(-np.inf, np.inf, shape=(n_obs,), dtype=np.float32)
 
@@ -70,7 +75,7 @@ class QuadEnv(gym.Env):
 
     def _obs(self):
         q, est = self.quad, self.estimator
-        actor = [est.gravity_body, *self.history]
+        actor = [est.gravity_body, [self.t / self.max_steps], *self.history]
         privileged = [q.R.flatten(), q.w / W_SCALE, q.v / V_SCALE, (q.p - self.target) / POS_SCALE]
         if self.task == "flip":
             # Attitude alone can't tell "before flip" from "after flip" (both upright),
@@ -108,7 +113,6 @@ class QuadEnv(gym.Env):
         self.best_progress = np.clip(self.roll_progress, 0, 2 * np.pi)
         self.prev_action = np.zeros(4)
         self.t = 0
-        self.z0 = self.quad.p[2]
 
         # Sensors: the estimate starts from the true attitude with a small error (on the real drone: Betaflight's
         # estimate when the flip is triggered)
@@ -173,11 +177,18 @@ class QuadEnv(gym.Env):
             reward, terminated = self._flip_reward(action, dist)
         self.prev_action = action
 
-        if terminated:
+        crashed = terminated
+        if crashed:
             reward -= self.cfg.reward.crash
-        truncated = self.t >= self.max_steps
+        truncated = self.t >= self.max_steps and not crashed
+        if truncated and self.task == "flip":
+            # Handover to the pilot: the task ends here. Bonus for being back at the start point, only after a flip
+            # (otherwise hovering in place would compete with flipping)
+            if self.flip_done:
+                reward += self.cfg.reward.handover * np.exp(-dist / self.cfg.reward.handover_scale)
+            terminated, truncated = True, False
         return self._obs(), float(reward), terminated, truncated, {
-            "dist": dist, "flip_done": self.flip_done, "roll_progress": self.roll_progress}
+            "dist": dist, "flip_done": self.flip_done, "roll_progress": self.roll_progress, "crashed": crashed}
 
     def _terminated(self, dist):
         return bool(self.quad.p[2] < self.cfg.min_height or dist > self.cfg.max_dist)
@@ -206,12 +217,13 @@ class QuadEnv(gym.Env):
                 self.flip_done = True
                 reward += r.completion_bonus
         else:
-            # Recovery: be level, stop rotating, stop moving and hold the start height. Not "fly back to the start
-            # point": the drone can't measure its position. Both pulls are positive and largest at the goal, and
-            # still matter far from it, so recovering always beats crashing early.
+            # Recovery: be level, stop rotating, stop moving, roughly back at the start point. The drone can't measure
+            # its position, but over a short episode it can undo its own displacement from what it commanded and
+            # felt (thrust history, drag). Both pulls are positive and largest at the goal, and still matter far
+            # from it, so recovering always beats crashing early.
             reward += r.upright * upright
+            reward += r.target * np.exp(-dist / r.target_scale)
             reward += r.still * np.exp(-np.linalg.norm(q.v) / r.still_scale)
-            reward += r.height * np.exp(-abs(q.p[2] - self.z0) / r.height_scale)
             reward -= r.body_rate * np.linalg.norm(q.w)
             # Capped, so being fast right after the flip can't outweigh the positive terms (crashing would
             # then pay)
