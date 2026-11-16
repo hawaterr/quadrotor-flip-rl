@@ -1,6 +1,7 @@
 """Gymnasium quadrotor environment with selectable task.
 
-    task="flip":  do one roll flip, then recover to a still, level hover at the start height.
+    task="flip":  do one roll flip, then recover to level, not rotating, slow, near the start height; then the pilot
+                  takes over (on IMU alone the drone can't hold its position).
     task="hover": hold a fixed target point, starting from a perturbed state (a quick sanity check).
 
 Action (4, in [-1, 1]): collective thrust, roll rate, pitch rate, yaw rate  -> scaled to CTBR.

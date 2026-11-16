@@ -11,9 +11,14 @@ a thrust limit. When the motors can't deliver everything, the priority is roll a
 
 Sensors: an ideal gyro and accelerometer at the centre of mass (`imu`); noise and bias are added in envs/sensors.py.
 
+Drag: linear rotor drag, a force against the velocity in body frame, F = -m * drag * v_body (per axis). Strong in x/y
+(rotor drag), weak in z. It is the only force besides thrust that the accelerometer sees, so it is what makes velocity
+(weakly) observable from the IMU: a drag-free quadrotor's accelerometer reads (0, 0, thrust / m) whatever its tilt
+and velocity.
+
 Simplifications:
     - Motor thrust is commanded directly: no battery, propeller or motor speed model, no rotor inertia.
-    - No drag, no ground contact (episodes end above the floor).
+    - Drag is linear, no quadratic body drag, no wind. No ground contact (episodes end above the floor).
 """
 import os
 
@@ -55,6 +60,7 @@ class Quadrotor:
         self.max_thrust_acc = cfg.thrust_to_weight * G  # max collective thrust / mass
         self.max_motor_thrust = self.m * self.max_thrust_acc / 4  # N
         self.max_rate = cfg.max_rate
+        self.drag = np.array(cfg.drag, float)
         self.kp = np.array(cfg.rate_kp)
         self.dt = cfg.sim_dt
         self.reset()
@@ -172,6 +178,8 @@ class Quadrotor:
         torque = self.I * (self.kp * (rate_cmd - w)) + np.cross(w, self.I * w)
 
         self.data.ctrl[:] = self._mix(self.m * thrust_acc_cmd, torque)
+        R = self.R
+        self.data.xfrc_applied[self.body, :3] = R @ (-self.m * self.drag * (R.T @ self.v))  # world frame, at the CoM
         mujoco.mj_step(self.model, self.data)
 
 
@@ -184,7 +192,7 @@ if __name__ == "__main__":
     quad.thrust_acc = 0.0
     for _ in range(500):  # 1 s free fall
         quad.step(0.0, np.zeros(3))
-    print(f"free fall 1s: z={quad.p[2]:.2f} (expect ~{10 - 0.5 * G:.2f} minus a bit of thrust lag)")
+    print(f"free fall 1s: z={quad.p[2]:.2f} (no drag: ~{10 - 0.5 * G:.2f} minus a bit of thrust lag; vertical drag slows it)")
 
     quad.reset(p=[0, 0, 2])
     for _ in range(1000):  # 2 s hover

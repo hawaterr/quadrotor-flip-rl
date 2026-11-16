@@ -13,6 +13,7 @@ from omegaconf import OmegaConf
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.env_util import make_vec_env
+from stable_baselines3.common.vec_env import SubprocVecEnv
 
 from configs import Config, load_config
 from envs.evaluation import EvalLog, evaluate as evaluate_policy
@@ -66,7 +67,9 @@ class PeriodicSaveAndEval(BaseCallback):
 
 
 def train(cfg):
-    env = make_vec_env(QuadEnv, n_envs=cfg.n_envs, seed=cfg.train_seed, env_kwargs=dict(cfg=cfg.env, training=True))
+    # One process per env: the simulation (not the small network) is the bottleneck, so this is what speeds it up
+    env = make_vec_env(QuadEnv, n_envs=cfg.n_envs, seed=cfg.train_seed, env_kwargs=dict(cfg=cfg.env, training=True),
+                       vec_env_cls=SubprocVecEnv)
     if cfg.init_model:  # fine-tune: start from a saved model's weights, with this run's env and settings
         model = PPO.load(cfg.init_model, env=env, n_steps=cfg.n_steps, batch_size=cfg.batch_size, gamma=cfg.gamma,
                          learning_rate=cfg.learning_rate, ent_coef=cfg.ent_coef, verbose=1, tensorboard_log="runs",

@@ -2,7 +2,7 @@
 
 Teaching a simulated quadrotor to do a flip with reinforcement learning: one roll flip, then recover to level. Comparison between PPO and TD-MPC2.
 
-> **Branch `PPO-hardware-flip`:** towards a PPO flip on a real drone (Betaflight whoop + ESP32). The policy now sees only what the drone measures: noisy gyro, accelerometer and a gyro-integrated attitude estimate, with no position or velocity (`envs/sensors.py`). The critic still gets the ground-truth state during training (asymmetric actor-critic, `ppo/asymmetric.py`), and the flip ends in a still hover instead of flying back to the start point. TD-MPC2, the saved models and the results below belong to the ground-truth-observation version on `main`, and TD-MPC2 is not maintained on this branch.
+> **Branch `PPO-hardware-flip`:** towards a PPO flip on a real drone (Betaflight whoop + ESP32). The policy now sees only what the drone measures: noisy gyro, accelerometer and a gyro-integrated attitude estimate, with no position or velocity (`envs/sensors.py`). The critic still gets the ground-truth state during training (asymmetric actor-critic, `ppo/asymmetric.py`), and the policy only flips and recovers to level (1.5 s episodes), then the pilot takes over: it can't measure its position, so it can't fly back to the start point. The dynamics include linear rotor drag, which is what lets the accelerometer sense velocity. TD-MPC2, the saved models and the results below belong to the ground-truth-observation version on `main`, and TD-MPC2 is not maintained on this branch.
 
 ## Results
 
