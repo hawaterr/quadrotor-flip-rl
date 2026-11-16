@@ -6,6 +6,9 @@
 
 Action (4, in [-1, 1]): collective thrust, roll rate, pitch rate, yaw rate  -> scaled to CTBR.
     Thrust is centred on hover: a[0] = 0 -> thrust = g, so a zero-mean initial policy roughly hovers.
+    Latency: each command reaches the rate controller a delay after the policy sends it, drawn once per episode
+    from `latency` (the whole loop: reading the IMU, inference, sending the command, Betaflight). The observation
+    records the action when it is sent, as the ESP32 would.
 
 Observation = [actor part, privileged part] (asymmetric actor-critic, ppo/asymmetric.py):
     actor part (the first n_actor_obs entries): only what the real drone has (envs/sensors.py), so the policy can be
@@ -24,6 +27,8 @@ a crash from a handover.
 All settings (dynamics, episode length, limits, start noise, curriculum, reward weights) come from
 configs/env.yaml (configs.load_env).
 """
+from collections import deque
+
 import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
@@ -56,6 +61,9 @@ class QuadEnv(gym.Env):
         self.imu = ImuModel(self.cfg.sensors)
         self.estimator = AttitudeEstimator()
         self.history_len = self.cfg.history
+        # Latency, in physics steps. Models saved before it existed have no `latency`: none
+        latency = self.cfg.get("latency") or [0.0, 0.0]
+        self.latency_range = [int(round(s / self.quad.dt)) for s in latency]
 
         self.action_space = spaces.Box(-1.0, 1.0, shape=(4,), dtype=np.float32)
         flip_extra = 2 if self.task == "flip" else 0  # roll progress + flip done flag
@@ -127,6 +135,14 @@ class QuadEnv(gym.Env):
         self.history = []
         for _ in range(self.history_len):
             self._push_frame(gyro, accel, self.prev_action)
+
+        # Latency: commands reach the motors `delay` physics steps after the policy sends them. Until then the
+        # command from before the start is in effect: hover thrust at the current body rates (on the real drone:
+        # the pilot's). Drawn last, so the other random draws don't depend on it; no draw for a fixed latency
+        lo, hi = self.latency_range
+        self.delay = lo if lo == hi else int(rng.integers(lo, hi + 1))
+        held = (G, np.clip(self.quad.w, -self.quad.max_rate, self.quad.max_rate))
+        self.commands = deque([held] * self.delay)
         return self._obs(), {}
 
     def _random_start(self, exact):
@@ -162,7 +178,8 @@ class QuadEnv(gym.Env):
         action = np.clip(action, -1, 1)
         thrust, rates = self.scale_action(action)
         for _ in range(self.substeps):
-            self.quad.step(thrust, rates)
+            self.commands.append((thrust, rates))
+            self.quad.step(*self.commands.popleft())  # the command sent `delay` physics steps ago
             self.roll_progress += self.quad.w[0] * self.quad.dt
             gyro, accel = self._read_imu()
         self._update_est_flip_done()
