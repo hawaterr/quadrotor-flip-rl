@@ -172,6 +172,11 @@ def print_summary(log, env):
     print(f"steps={len(log['p']) - 1}  total reward={log['r'][-1]:.2f}  final dist={log['dist'][-1]:.3f}{flip}  "
           f"final upright={env.quad.R[2, 2]:.2f}  final z={env.quad.p[2]:.2f}  crashed={log['crashed']}  "
           f"mean |a - prev a|={np.mean(log['action_change']):.2f}")
+    if env.params:  # domain randomisation: this episode's true dynamics, as multiples of nominal
+        p = env.params
+        print(f"dynamics: hover thrust x{p['hover_thrust']:.2f}  thrust curve k={p['thrust_curve']:.2f}  "
+              f"inertia x{np.round(p['inertia'], 2)}  motor lag x{p['motor_tau']:.2f}  drag x{np.round(p['drag'], 2)}  "
+              f"latency {1000 * env.delay * env.quad.dt:.0f} ms")
     tail = max(1, round(SETTLE_WINDOW / env.policy_dt))
     print(f"last {SETTLE_WINDOW} s: mean dist={np.mean(log['dist'][-tail:]):.3f}  "
           f"mean speed={np.mean(log['speed'][-tail:]):.2f}  final speed={log['speed'][-1]:.2f}")

@@ -17,8 +17,14 @@ Observation = [actor part, privileged part] (asymmetric actor-critic, ppo/asymme
         accelerometer (3), action taken (4)]; flip only: + estimated roll progress (1) + estimated flip done flag (1).
         No position, no velocity: the drone can't measure them.
     privileged part: the ground-truth state, read only by the critic (training in sim): rotation matrix (9), body
-        rates (3), velocity (3), position error (3); flip only: + true roll progress (1) + true flip done flag (1).
+        rates (3), velocity (3), position error (3); flip only: + true roll progress (1) + true flip done flag (1);
+        with domain randomisation and critic_params: + this episode's dynamics (N_PARAM_OBS).
 The reward is computed from the ground truth (training only).
+
+Domain randomisation (`randomisation` in configs/env.yaml, null = off): each episode draws the true dynamics (thrust
+at the hover command, thrust curve, inertia, motor lag, drag), while the rate controller, the mixer and the action
+scaling keep assuming the nominal ones (envs/quadrotor.py, set_params). The actor has to infer them from its IMU and
+action history. Applied in evaluation too (fixed seeds, so fixed draws).
 
 Flip episodes end at the handover (episode_time): the pilot takes over, so it is a true end of the task (terminated,
 not truncated: no value bootstrapped beyond it), with a bonus for being back at the start point. info["crashed"] tells
@@ -42,6 +48,9 @@ from envs.sensors import AttitudeEstimator, ImuModel, axis_angle_quat, quat_mult
 W_SCALE = 10.0    # rad/s
 V_SCALE = 5.0     # m/s
 POS_SCALE = 2.0   # m
+# Randomised dynamics in the critic's observation: hover thrust, thrust curve, inertia (3), motor lag, drag x/y,
+# drag z, latency
+N_PARAM_OBS = 9
 
 
 class QuadEnv(gym.Env):
@@ -64,11 +73,16 @@ class QuadEnv(gym.Env):
         # Latency, in physics steps. Models saved before it existed have no `latency`: none
         latency = self.cfg.get("latency") or [0.0, 0.0]
         self.latency_range = [int(round(s / self.quad.dt)) for s in latency]
+        # Domain randomisation: None (also for models saved before it existed) = nominal dynamics
+        self.randomisation = self.cfg.get("randomisation")
+        self.params = {}
+        dr = self.randomisation
+        self.critic_params = bool(dr and dr.critic_params)
 
         self.action_space = spaces.Box(-1.0, 1.0, shape=(4,), dtype=np.float32)
         flip_extra = 2 if self.task == "flip" else 0  # roll progress + flip done flag
         self.n_actor_obs = 4 + 10 * self.history_len + flip_extra
-        n_obs = self.n_actor_obs + 18 + flip_extra
+        n_obs = self.n_actor_obs + 18 + flip_extra + (N_PARAM_OBS if self.critic_params else 0)
         self.observation_space = spaces.Box(-np.inf, np.inf, shape=(n_obs,), dtype=np.float32)
 
     def scale_action(self, a):
@@ -90,6 +104,8 @@ class QuadEnv(gym.Env):
             # so the agent needs to know how far it has rotated.
             actor += [[est.roll_progress / (2 * np.pi)], [float(self.est_flip_done)]]
             privileged += [[self.roll_progress / (2 * np.pi)], [float(self.flip_done)]]
+        if self.critic_params:
+            privileged.append(self.param_obs)
         return np.concatenate(actor + privileged).astype(np.float32)
 
     def _push_frame(self, gyro, accel, action):
@@ -143,7 +159,29 @@ class QuadEnv(gym.Env):
         self.delay = lo if lo == hi else int(rng.integers(lo, hi + 1))
         held = (G, np.clip(self.quad.w, -self.quad.max_rate, self.quad.max_rate))
         self.commands = deque([held] * self.delay)
+        if self.randomisation:  # drawn after everything else, so the starts are the same with and without it
+            self._randomise_dynamics()
         return self._obs(), {}
+
+    def _randomise_dynamics(self):
+        """Draw this episode's true dynamics, uniformly in the ranges of `randomisation` (configs/env.yaml), and give
+        them to the plant. The controller and the actor don't know them; the critic does (critic_params), scaled to
+        [-1, 1] over their ranges."""
+        rng, dr = self.np_random, self.randomisation
+        draw = lambda name, n=None: rng.uniform(*dr[name], n)
+        drag_xy, drag_z = draw("drag_xy"), draw("drag_z")
+        p = self.params = dict(hover_thrust=draw("hover_thrust"), thrust_curve=draw("thrust_curve"),
+                               inertia=draw("inertia", 3), motor_tau=draw("motor_tau"),
+                               drag=np.array([drag_xy, drag_xy, drag_z]))
+        self.quad.set_params(**p)
+
+        def scaled(value, lo, hi):
+            return np.zeros_like(value) if hi == lo else (np.asarray(value) - (lo + hi) / 2) / ((hi - lo) / 2)
+        self.param_obs = np.concatenate([
+            [scaled(p["hover_thrust"], *dr.hover_thrust), scaled(p["thrust_curve"], *dr.thrust_curve)],
+            scaled(p["inertia"], *dr.inertia),
+            [scaled(p["motor_tau"], *dr.motor_tau), scaled(drag_xy, *dr.drag_xy), scaled(drag_z, *dr.drag_z),
+             scaled(self.delay, *self.latency_range)]])
 
     def _random_start(self, exact):
         """Reset the quadrotor to a random state around the target, with the spread in configs/env.yaml (`start`).
