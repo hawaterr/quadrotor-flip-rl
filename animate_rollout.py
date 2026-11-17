@@ -14,6 +14,8 @@ Settings: configs/animate_rollout.yaml; override any of them as key=value.
     python animate_rollout.py policy=ppo_flip_v1        # any model file in models/ named ppo_* or tdmpc2_*
     python animate_rollout.py save=plots/flip.gif       # also save the animation
     python animate_rollout.py plots=false               # MuJoCo view alone (no plots or text), as in the README
+    python animate_rollout.py policy=ppo_flip seed=7 drone_from=ppo_flip_dr    # the same drone as
+    python animate_rollout.py policy=ppo_flip_dr seed=7                        #   ppo_flip_dr gets at seed 7
 
 Without a display, set MUJOCO_GL=egl.
 """
@@ -66,6 +68,29 @@ def env_config_for(policy):
         from ppo.train_ppo import saved_env_config
         return saved_env_config(policy)
     return load_env(task_of(policy))
+
+
+# The settings that make up the drone (vs what the policy observes and is rewarded for)
+DRONE_KEYS = ("dynamics", "latency", "sensors", "randomisation")
+NOMINAL_DRAWS = {"hover_thrust": [1.0, 1.0], "thrust_curve": [0.0, 0.0], "inertia": [1.0, 1.0],
+                 "motor_tau": [1.0, 1.0], "drag_xy": [1.0, 1.0], "drag_z": [1.0, 1.0]}
+
+
+def env_config_with_drone(policy, drone_from):
+    """The policy's own env, flying the drone of another model's env (its dynamics, latency, sensors and domain
+    randomisation), so two policies can be compared on the same drone: for a given seed, the start and the drawn
+    dynamics are the same. The critic's parameter inputs follow the policy, so the observation size still fits it."""
+    cfg = env_config_for(policy)
+    other = env_config_for(drone_from)
+    if cfg.task != other.task:
+        raise ValueError(f"{policy} is a {cfg.task} policy, {drone_from} a {other.task} one")
+    own_critic = bool((cfg.get("randomisation") or {}).get("critic_params"))
+    dr = other.get("randomisation")
+    if dr is not None:
+        dr = {**dr, "critic_params": own_critic}
+    elif own_critic:  # nominal drone, but the policy expects the parameter inputs: draw them at nominal
+        dr = {**NOMINAL_DRAWS, "critic_params": True}
+    return Config({**cfg, **{k: other.get(k) for k in DRONE_KEYS}, "randomisation": dr})
 
 
 def scripted_hover_policy(env, scripted):
@@ -309,12 +334,25 @@ def _save_gif(fig, update, frames, path):
 
 
 def _play(fig, update, n_states, policy_dt, start_pause, save):
-    """Animate at about real time, after saving to `save` (a path) if given."""
-    hold = [0] * round(start_pause / FRAME_DT)  # repeat t = 0 so the starting position is easy to see
-    frames = hold + list(range(0, n_states, max(1, round(FRAME_DT / policy_dt))))
+    """Animate in real time (sim time = wall-clock time), after saving to `save` (a path) if given."""
     if save:
-        _save_gif(fig, update, frames, save)
-    anim = FuncAnimation(fig, update, frames=frames, interval=FRAME_DT * 1000, blit=True)
+        hold = [0] * round(start_pause / FRAME_DT)  # repeat t = 0 so the starting position is easy to see
+        _save_gif(fig, update, hold + list(range(0, n_states, max(1, round(FRAME_DT / policy_dt)))), save)
+    end = (n_states - 1) * policy_dt
+
+    def wall_clock_frames():
+        """The state at the wall-clock time since this loop started (holding t = 0 for start_pause). The timer only
+        sets a minimum gap between frames, so when drawing a frame takes longer than FRAME_DT, playing every frame
+        would run in slow motion; this skips frames instead. Called again for each repeat, restarting the clock."""
+        start = time.perf_counter() + start_pause
+        while True:
+            t = time.perf_counter() - start
+            yield min(max(0, int(t / policy_dt)), n_states - 1)
+            if t >= end:
+                return
+
+    anim = FuncAnimation(fig, update, frames=wall_clock_frames, interval=FRAME_DT * 1000, blit=True,
+                         cache_frame_data=False)
     plt.show()
     return anim  # FuncAnimation stops if it is garbage collected
 
@@ -354,7 +392,12 @@ if __name__ == "__main__":
     if cfg.policy not in BASELINES + trained_models():
         raise ValueError(f"policy must be a baseline {BASELINES} or a model in models/ {trained_models()}, "
                          f"got {cfg.policy!r}")
-    env = QuadEnv(cfg=env_config_for(cfg.policy))
+    if cfg.drone_from is None:
+        env = QuadEnv(cfg=env_config_for(cfg.policy))
+    else:
+        if cfg.drone_from not in BASELINES + trained_models():
+            raise ValueError(f"drone_from must be a model in models/ {trained_models()}, got {cfg.drone_from!r}")
+        env = QuadEnv(cfg=env_config_with_drone(cfg.policy, cfg.drone_from))
     log = rollout(env, make_policy(cfg.policy, env, plan=cfg.plan, scripted=cfg.scripted), cfg.seed)
     print_summary(log, env)
     animate(log, env.quad.model, env.policy_dt, cfg.save, cfg.start_pause, cfg.plots)

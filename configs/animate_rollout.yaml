@@ -6,6 +6,9 @@ seed: 0                   # seed of the episode's starting state
 save: null                # e.g. plots/flip.gif to also save the animation
 plan: true                # tdmpc2_*: false acts with the policy prior alone, without MPPI
 start_pause: 0.7          # s to hold the first frame (t = 0), so the starting position is easy to see
+drone_from: null          # a model whose drone to fly on instead of the policy's own (dynamics, latency, sensors,
+                          #   domain randomisation): compares two policies on the same drone for a given seed, e.g.
+                          #   policy=ppo_flip drone_from=ppo_flip_dr. env.yaml if a baseline (scripted_flip, ...)
 plots: true               # false: MuJoCo view alone, without the plots and status text
 
 # Hand-written baseline controllers (scripted_hover / scripted_flip)
