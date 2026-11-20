@@ -101,6 +101,20 @@ python -m ppo.train_ppo name=ppo_flip_test    # experiment: saves models/ppo_fli
 python -m ppo.train_ppo init_model=models/ppo_flip.zip steps=500000 env.reward.speed=0.3    # fine-tune: continue from a saved model with changed settings
 ```
 
+## Development
+
+```bash
+pip install -r requirements-dev.txt   # ruff, mypy, pytest
+
+ruff check .      # lint (ruff check . --fix to auto-fix)
+mypy              # type check
+pytest            # tests, ~5 s
+```
+
+Settings for all three are in `pyproject.toml`. The tests in `tests/` cover the env, the physics and the config loading, plus a short PPO training run.
+
+In Claude Code, hooks in `.claude/` run ruff and mypy after each edit, and the tests at the end of each turn when `.py` files have uncommitted changes.
+
 ## License
 
 [PolyForm Noncommercial 1.0.0](LICENSE): free for any noncommercial use (personal projects, study, hobby, noncommercial research). Commercial use is not permitted. Copyright (c) 2026 Ali Hawater.
