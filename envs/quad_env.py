@@ -30,17 +30,14 @@ class QuadEnv(gym.Env):
         self.history_len = self.cfg.history
         scale = self.cfg.obs_scale
         self.w_scale, self.v_scale, self.pos_scale = scale.body_rate, scale.velocity, scale.position
-        latency = self.cfg.get("latency") or [0.0, 0.0]
-        self.latency_range = [int(round(s / self.quad.dt)) for s in latency]
-        self.randomisation = self.cfg.get("randomisation")
+        self.latency_range = [int(round(s / self.quad.dt)) for s in self.cfg.latency]
+        self.randomisation = self.cfg.randomisation
         self.params = {}
-        dr = self.randomisation
-        self.critic_params = bool(dr and dr.critic_params)
 
         self.action_space = spaces.Box(-1.0, 1.0, shape=(4,), dtype=np.float32)
         flip_extra = 2 if self.task == "flip" else 0  # roll progress + flip done flag
         self.n_actor_obs = 4 + 10 * self.history_len + flip_extra
-        n_obs = self.n_actor_obs + 18 + flip_extra + (N_PARAM_OBS if self.critic_params else 0)
+        n_obs = self.n_actor_obs + 18 + flip_extra + (N_PARAM_OBS if self.randomisation else 0)
         self.observation_space = spaces.Box(-np.inf, np.inf, shape=(n_obs,), dtype=np.float32)
 
     def scale_action(self, a):
@@ -61,7 +58,7 @@ class QuadEnv(gym.Env):
             # Before and after the flip look the same, so the agent needs its roll progress
             actor += [[est.roll_progress / (2 * np.pi)], [float(self.est_flip_done)]]
             privileged += [[self.roll_progress / (2 * np.pi)], [float(self.flip_done)]]
-        if self.critic_params:
+        if self.randomisation:
             privileged.append(self.param_obs)
         return np.concatenate(actor + privileged).astype(np.float32)
 

@@ -62,13 +62,10 @@ def env_config_with_drone(policy, drone_from):
     other = env_config_for(drone_from)
     if cfg.task != other.task:
         raise ValueError(f"{policy} is a {cfg.task} policy, {drone_from} a {other.task} one")
-    own_critic = bool((cfg.get("randomisation") or {}).get("critic_params"))
-    dr = other.get("randomisation")
-    if dr is not None:
-        dr = {**dr, "critic_params": own_critic}
-    elif own_critic:  # nominal drone, but the policy expects param inputs
-        dr = {**NOMINAL_DRAWS, "critic_params": True}
-    return Config({**cfg, **{k: other.get(k) for k in DRONE_KEYS}, "randomisation": dr})
+    dr = other.randomisation
+    if dr is None and cfg.randomisation is not None:  # policy expects param inputs: draw them at nominal
+        dr = NOMINAL_DRAWS
+    return Config({**cfg, **{k: other[k] for k in DRONE_KEYS}, "randomisation": dr})
 
 
 def scripted_hover_policy(env, scripted):
@@ -109,11 +106,12 @@ def make_policy(name, env, plan=True, scripted=None):
     if name.startswith("ppo_"):
         from stable_baselines3 import PPO
         model = PPO.load(f"models/{name}")
-        return lambda obs, t: model.predict(obs, deterministic=True)[0]
+        n = model.observation_space.shape[0]  # drops param inputs it wasn't trained with
+        return lambda obs, t: model.predict(obs[:n], deterministic=True)[0]
     if name.startswith("tdmpc2_"):
         from tdmpc2.agent import TDMPC2
         agent, _ = TDMPC2.load(f"models/{name}.pt")
-        return lambda obs, t: agent.act(obs, t0=t == 0, eval_mode=True, plan=plan)
+        return lambda obs, t: agent.act(obs[:agent.obs_dim], t0=t == 0, eval_mode=True, plan=plan)
     if name == "scripted_hover":
         return scripted_hover_policy(env, scripted)
     return scripted_flip_policy(env, scripted)
