@@ -6,7 +6,8 @@ import torch
 from torch.utils.tensorboard import SummaryWriter
 
 from configs import Config, load_config
-from envs.evaluation import EvalLog, evaluate as evaluate_policy
+from envs.evaluation import EvalLog
+from envs.evaluation import evaluate as evaluate_policy
 from envs.quad_env import QuadEnv
 from tdmpc2.agent import TDMPC2
 
@@ -100,7 +101,8 @@ def train(cfg: Config):
     # Learning curve
     eval_log, eval_env = EvalLog(name), QuadEnv(cfg=cfg.env)
     obs, _ = env.reset(seed=cfg.train_seed)
-    t0, ep_ret, ep_len_now, ep, tic, info = True, 0.0, 0, 0, time.time(), {}
+    t0, ep_ret, ep_len_now, ep, tic = True, 0.0, 0, 0, time.time()
+    info: dict[str, float] = {}
     step = 0
     try:
         for step in range(cfg.steps):

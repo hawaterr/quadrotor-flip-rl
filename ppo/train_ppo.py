@@ -2,14 +2,17 @@
 import os
 import time
 
+import numpy as np
 from omegaconf import OmegaConf
 from stable_baselines3 import PPO
+from stable_baselines3.common.base_class import BaseAlgorithm
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.vec_env import SubprocVecEnv
 
-from configs import Config, load_config
-from envs.evaluation import EvalLog, evaluate as evaluate_policy
+from configs import Config, from_omegaconf, load_config
+from envs.evaluation import EvalLog
+from envs.evaluation import evaluate as evaluate_policy
 from envs.quad_env import QuadEnv
 from ppo.asymmetric import AsymmetricPolicy
 
@@ -20,10 +23,10 @@ def model_name(cfg: Config) -> str:
 
 def saved_env_config(name: str) -> Config:
     """The env config saved next to models/<name>.zip."""
-    return Config(OmegaConf.to_container(OmegaConf.load(f"models/{name}.yaml"))["env"])
+    return from_omegaconf(OmegaConf.load(f"models/{name}.yaml")).env
 
 
-def save(model: PPO, cfg: Config):
+def save(model: BaseAlgorithm, cfg: Config):
     """Save the model and its config, via temp files so readers never see half-written files."""
     path = f"models/{model_name(cfg)}"
     os.makedirs("models", exist_ok=True)
@@ -42,13 +45,15 @@ class PeriodicSaveAndEval(BaseCallback):
         self.log, self.start = EvalLog(model_name(cfg)), time.time()
         self.eval_env = QuadEnv(cfg=cfg.env)  # no mid-roll starts
 
-    def _on_step(self):
+    def _on_step(self) -> bool:
         if self.num_timesteps >= self.next_save:
             save(self.model, self.cfg)
             print(f"checkpoint saved at step {self.num_timesteps}")
             self.next_save += self.cfg.save_every
         if self.num_timesteps >= self.next_eval:
-            act = lambda obs, t: self.model.predict(obs, deterministic=True)[0]
+            def act(obs: np.ndarray, t: int) -> np.ndarray:
+                return self.model.predict(obs, deterministic=True)[0]
+
             self.log.write(self.num_timesteps, time.time() - self.start,
                            evaluate_policy(self.eval_env, act, self.cfg.eval_seeds))
             self.next_eval += self.cfg.eval_every

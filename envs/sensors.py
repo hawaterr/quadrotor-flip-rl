@@ -3,13 +3,17 @@ import numpy as np
 
 from configs import Config
 
+SMALL_ANGLE = 1e-12  # rad; a rotation below this is the identity
+
 
 class ImuModel:
+    """Gyro and accelerometer with a per-episode bias and white noise."""
+
     def __init__(self, cfg: Config):
         """cfg: the `sensors` section of configs/env.yaml."""
         self.cfg = cfg
-        self.gyro_bias = np.zeros(3)
-        self.accel_bias = np.zeros(3)
+        self.gyro_bias: np.ndarray = np.zeros(3)
+        self.accel_bias: np.ndarray = np.zeros(3)
 
     def reset(self, rng: np.random.Generator):
         """Draw this episode's biases (constant over an episode: a few seconds)."""
@@ -37,13 +41,15 @@ def quat_multiply(a: np.ndarray, b: np.ndarray) -> np.ndarray:
 def axis_angle_quat(rotvec: np.ndarray) -> np.ndarray:
     """Rotation vector [rad] -> quaternion [w, x, y, z]."""
     angle = np.linalg.norm(rotvec)
-    if angle < 1e-12:
+    if angle < SMALL_ANGLE:
         return np.array([1.0, 0, 0, 0])
     return np.concatenate([[np.cos(angle / 2)], np.sin(angle / 2) * rotvec / angle])
 
 
 class AttitudeEstimator:
-    def reset(self, q: np.ndarray, roll_progress=0.0):
+    """Attitude from integrating the gyro alone (no accelerometer correction)."""
+
+    def reset(self, q: np.ndarray, roll_progress: float = 0.0):
         """Start from attitude q (body -> world, [w, x, y, z])."""
         self.q = np.array(q, float)
         self.roll_progress = roll_progress

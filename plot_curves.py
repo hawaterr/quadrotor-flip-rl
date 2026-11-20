@@ -9,23 +9,25 @@ import numpy as np
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
-from configs import load_config, load_env  # noqa: E402
+from configs import Config, load_config, load_env  # noqa: E402
+
+Curves = dict[str, tuple[list[float], np.ndarray]]  # legend label -> (env steps, seeds x evals)
 
 # Line colours (one per curve, in order), then background, text, secondary text and grid
 SERIES = ["#2a78d6", "#eb6834", "#1baf7a"]
 SURFACE, TEXT, TEXT_2, GRID = "#fcfcfb", "#0b0b0b", "#52514e", "#e4e3df"
 
 
-def read_log(path):
+def read_log(path: str) -> dict[str, list[float]] | None:
     with open(path) as f:
         rows = list(csv.DictReader(f))
     return {k: [float(r[k]) for r in rows] for k in rows[0]} if rows else None
 
 
-def read_seeds(run, column, seeds):
+def read_seeds(run: str, column: str, seeds: list[int]) -> tuple[list[float], np.ndarray] | None:
     """(steps, seeds x evals) of `column` over the existing logs, cut to the shortest; None if none."""
-    logs = [read_log(path) for path in (f"results/{run}_seed{s}.csv" for s in seeds) if os.path.exists(path)]
-    logs = [log for log in logs if log and column in log]
+    paths = [path for path in (f"results/{run}_seed{s}.csv" for s in seeds) if os.path.exists(path)]
+    logs = [log for log in map(read_log, paths) if log and column in log]
     if not logs:
         return None
     n = min(len(log["step"]) for log in logs)
@@ -35,7 +37,7 @@ def read_seeds(run, column, seeds):
     return step, np.array([log[column][:n] for log in logs])
 
 
-def load_curves(cfg):
+def load_curves(cfg: Config) -> Curves:
     """{legend label: (env steps, seeds x evals array)} for the curves in the config that have logs."""
     curves = {}
     for label, curve in cfg.curves.items():
@@ -48,13 +50,13 @@ def load_curves(cfg):
     return curves
 
 
-def plot(curves, log_x, out):
+def plot(curves: Curves, log_x: bool, out: str):
     """Mean over seeds with a band of +- 1 std, one line per curve, saved to `out`."""
     plt.rcParams.update({"font.size": 10, "text.color": TEXT, "axes.labelcolor": TEXT_2,
                          "xtick.color": TEXT_2, "ytick.color": TEXT_2, "axes.edgecolor": GRID})
     fig, ax = plt.subplots(figsize=(7, 4.2), facecolor=SURFACE)
     ax.set_facecolor(SURFACE)
-    for (label, (step, y)), color in zip(curves.items(), SERIES):
+    for (label, (step, y)), color in zip(curves.items(), SERIES, strict=False):
         mean = y.mean(axis=0)
         ax.plot(step, mean, color=color, lw=2, label=f"{label} (n={len(y)})")
         if len(y) > 1:

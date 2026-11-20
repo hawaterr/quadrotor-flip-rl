@@ -1,0 +1,26 @@
+# Tool config only: ruff check . && mypy
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "N", "PLR2004", "D", "ANN"]
+ignore = [
+    "D102", "D103", "D104", "D105", "D107",  # docstrings required on modules and classes only
+    "N802", "N803", "N806",                  # physics names: R, P, T, G, H
+    "N812",                                  # import torch.nn.functional as F
+]
+
+[tool.ruff.lint.flake8-annotations]
+mypy-init-return = true         # no -> None on __init__
+allow-star-arg-any = true       # *args: Any, **kwargs: Any
+suppress-none-returning = true  # no -> None on functions that return nothing
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.mypy]
+python_version = "3.10"
+files = ["configs", "envs", "ppo", "tdmpc2", "animate_rollout.py", "plot_curves.py"]
+ignore_missing_imports = true

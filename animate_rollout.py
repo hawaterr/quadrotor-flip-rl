@@ -1,16 +1,17 @@
 """Animate one episode of a policy on QuadEnv: MuJoCo view plus command and attitude plots."""
 import os
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 
 import matplotlib.pyplot as plt
 import mujoco
 import numpy as np
 import torch
 from matplotlib.animation import FuncAnimation
+from matplotlib.artist import Artist
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
-from matplotlib.gridspec import GridSpec
+from matplotlib.gridspec import GridSpec, SubplotSpec
 from matplotlib.lines import Line2D
 from PIL import Image
 
@@ -75,7 +76,7 @@ def env_config_with_drone(policy: str, drone_from: str) -> Config:
 
 def scripted_hover_policy(env: QuadEnv, scripted: Config) -> Policy:
     """Cascaded PD hover controller."""
-    def pd(obs, t):
+    def pd(obs: np.ndarray, t: int) -> np.ndarray:
         q = env.quad
         a_des = -scripted.pd_kp * (q.p - env.target) - scripted.pd_kd * q.v + np.array([0, 0, G])
         z_des = a_des / np.linalg.norm(a_des)
@@ -91,7 +92,7 @@ def scripted_flip_policy(env: QuadEnv, scripted: Config) -> Policy:
     pd = scripted_hover_policy(env, scripted)
     climb_steps = round(scripted.flip_climb_time / env.policy_dt)
 
-    def flip(obs, t):
+    def flip(obs: np.ndarray, t: int) -> np.ndarray:
         if t < climb_steps:
             return np.array([1.0, 0, 0, 0])
         if not env.flip_done:
@@ -100,7 +101,7 @@ def scripted_flip_policy(env: QuadEnv, scripted: Config) -> Policy:
     return flip
 
 
-def make_policy(name: str, env: QuadEnv, plan=True, scripted: Config | None = None) -> Policy:
+def make_policy(name: str, env: QuadEnv, scripted: Config, plan: bool = True) -> Policy:
     """scripted: the `scripted` section of configs/animate_rollout.yaml (gains of the hand-written controllers)."""
     if name == "zero":
         return lambda obs, t: np.array([-1.0, 0, 0, 0])          # thrust off
@@ -111,7 +112,7 @@ def make_policy(name: str, env: QuadEnv, plan=True, scripted: Config | None = No
     if name.startswith("ppo_"):
         from stable_baselines3 import PPO
         model = PPO.load(f"models/{name}")
-        n = model.observation_space.shape[0]  # drops param inputs it wasn't trained with
+        n = model.observation_space.shape[0]  # type: ignore[index]  # drops param inputs it wasn't trained with
         return lambda obs, t: model.predict(obs[:n], deterministic=True)[0]
     if name.startswith("tdmpc2_"):
         from tdmpc2.agent import TDMPC2
@@ -185,8 +186,9 @@ def print_summary(log: dict, env: QuadEnv):
     print(f"last {SETTLE_WINDOW} s: mean dist={np.mean(log['dist'][-tail:]):.3f}  "
           f"mean speed={np.mean(log['speed'][-tail:]):.2f}  final speed={log['speed'][-1]:.2f}")
     saturation = np.array(log["saturation"])
-    print(f"motor limits, share of steps: yaw reduced {100 * np.mean(saturation == SAT_YAW):.0f}%, collective changed "
-          f"{100 * np.mean(saturation == SAT_COLLECTIVE):.0f}%, roll/pitch reduced {100 * np.mean(saturation == SAT_ROLL_PITCH):.0f}%")
+    print(f"motor limits, share of steps: yaw reduced {100 * np.mean(saturation == SAT_YAW):.0f}%, "
+          f"collective changed {100 * np.mean(saturation == SAT_COLLECTIVE):.0f}%, "
+          f"roll/pitch reduced {100 * np.mean(saturation == SAT_ROLL_PITCH):.0f}%")
     # Skip the first call (warm-up)
     infer_ms = log["infer_ms"]
     steady = np.array(infer_ms[1:] or infer_ms)
@@ -221,11 +223,11 @@ def render_frames(log: dict, model: mujoco.MjModel, height: int, width: int) -> 
     hover_force = log["mass"] * G
     renderer = mujoco.Renderer(model, height, width)
     frames = []
-    for i, (p, q) in enumerate(zip(P, log["q"])):
+    for i, (p, q) in enumerate(zip(P, log["q"], strict=True)):
         data.qpos[:3], data.qpos[3:7] = p, q
         mujoco.mj_forward(model, data)
         renderer.update_scene(data, camera)
-        for start, end in zip(P[:i], P[1:i + 1]):
+        for start, end in zip(P[:i], P[1:i + 1], strict=True):
             _add_connector(renderer.scene, mujoco.mjtGeom.mjGEOM_CAPSULE, 0.006, start, end, (0.25, 0.3, 0.4, 0.6))
         tip = p + log["R"][i] @ [0, 0, ARROW_PER_HOVER * log["thrust"][i] / hover_force]
         _add_connector(renderer.scene, mujoco.mjtGeom.mjGEOM_ARROW, 0.012, p, tip, (0.1, 0.35, 0.9, 1.0))
@@ -242,7 +244,7 @@ def _setup_view(height: int, width: int, plots: bool) -> tuple[Figure, Axes, Gri
         ax = fig.add_subplot(gs[0, :])
     else:
         fig, gs = plt.figure(figsize=(width / 100, height / 100), dpi=100), None
-        ax = fig.add_axes([0, 0, 1, 1])
+        ax = fig.add_axes((0, 0, 1, 1))
     ax.axis("off")
     return fig, ax, gs
 
@@ -264,9 +266,10 @@ def _add_panels(fig: Figure, gs: GridSpec, series: dict[str, np.ndarray], T: np.
                 hover_force: float) -> list[tuple[Line2D, str, int | None]]:
     """Plots under the MuJoCo view; returns [(line, series, column)] to update each frame."""
     # (grid cell, y label, colour, [(series, column, style, legend label)])
-    panels = [(gs[1, 0], "thrust [N]", "b", [("thrust_cmd", None, "--", "cmd"), ("thrust", None, "-", "actual")]),
-              (gs[1, 1], "height z [m]", "k", [("z", None, "-", None)])]
-    for k, (name, col) in enumerate(zip(("roll", "pitch", "yaw"), ("C3", "C2", "C0"))):
+    panels: list[tuple[SubplotSpec, str, str, list[tuple[str, int | None, str, str | None]]]] = [
+        (gs[1, 0], "thrust [N]", "b", [("thrust_cmd", None, "--", "cmd"), ("thrust", None, "-", "actual")]),
+        (gs[1, 1], "height z [m]", "k", [("z", None, "-", None)])]
+    for k, (name, col) in enumerate(zip(("roll", "pitch", "yaw"), ("C3", "C2", "C0"), strict=True)):
         panels += [(gs[k + 2, 0], f"{name} rate [rad/s]", col,
                     [("rate_cmd", k, "--", "cmd"), ("w", k, "-", "actual")]),
                    (gs[k + 2, 1], f"{name} [deg]", col, [("angle", k, "-", None)])]
@@ -282,7 +285,10 @@ def _add_panels(fig: Figure, gs: GridSpec, series: dict[str, np.ndarray], T: np.
             ys.append(series[key] if c is None else series[key][:, c])
         lo, hi = min(y.min() for y in ys), max(y.max() for y in ys)
         pad = 0.1 * (hi - lo) + 1e-3
-        a.set_xlim(0, T[-1]); a.set_ylim(lo - pad, hi + pad); a.set_ylabel(ylabel, fontsize=8); a.grid(alpha=0.3)
+        a.set_xlim(0, T[-1])
+        a.set_ylim(lo - pad, hi + pad)
+        a.set_ylabel(ylabel, fontsize=8)
+        a.grid(alpha=0.3)
         a.tick_params(labelsize=7)
         if "yaw" in ylabel:
             a.set_xlabel("time [s]")
@@ -294,13 +300,14 @@ def _add_panels(fig: Figure, gs: GridSpec, series: dict[str, np.ndarray], T: np.
     return lines
 
 
-def _save_gif(fig: Figure, update: Callable[[int], object], frames: list[int], path: str):
+def _save_gif(fig: Figure, update: Callable[[int], Iterable[Artist]], frames: list[int], path: str):
     """Save a GIF with one octree palette and no dithering (about 20x smaller)."""
     images = []
     for i in frames:
         update(i)
         fig.canvas.draw()
-        images.append(Image.fromarray(np.asarray(fig.canvas.buffer_rgba())).convert("RGB"))
+        rgba = np.asarray(fig.canvas.buffer_rgba())  # type: ignore[attr-defined]  # Agg canvas
+        images.append(Image.fromarray(rgba).convert("RGB"))
     palette = images[-1].quantize(colors=256, method=Image.Quantize.FASTOCTREE, dither=Image.Dither.NONE)
     images = [image.quantize(palette=palette, dither=Image.Dither.NONE) for image in images]
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
@@ -308,7 +315,7 @@ def _save_gif(fig: Figure, update: Callable[[int], object], frames: list[int], p
     print(f"saved {path}")
 
 
-def _play(fig: Figure, update: Callable[[int], object], n_states: int, policy_dt: float, start_pause: float,
+def _play(fig: Figure, update: Callable[[int], Iterable[Artist]], n_states: int, policy_dt: float, start_pause: float,
           save: str | None) -> FuncAnimation:
     """Animate in real time (sim time = wall-clock time), after saving to `save` (a path) if given."""
     if save:
@@ -331,7 +338,8 @@ def _play(fig: Figure, update: Callable[[int], object], n_states: int, policy_dt
     return anim  # FuncAnimation stops if it is garbage collected
 
 
-def animate(log: dict, model: mujoco.MjModel, policy_dt: float, save: str | None = None, start_pause=0.0, plots=True):
+def animate(log: dict, model: mujoco.MjModel, policy_dt: float, save: str | None = None, start_pause: float = 0.0,
+            plots: bool = True):
     """start_pause: s to hold t = 0; plots=False draws the MuJoCo view only."""
     P = np.array(log["p"])
     T = np.arange(len(P)) * policy_dt
@@ -342,9 +350,9 @@ def animate(log: dict, model: mujoco.MjModel, policy_dt: float, save: str | None
     image = ax.imshow(frames[0])
     text = ax.text(0.01, 0.97, "", transform=ax.transAxes, va="top", fontsize=9)
     series = _plot_series(log, P)
-    lines = _add_panels(fig, gs, series, T, hover_force) if plots else []
+    lines = _add_panels(fig, gs, series, T, hover_force) if gs is not None else []
 
-    def update(i):
+    def update(i: int) -> tuple[Artist, ...]:
         image.set_data(frames[i])
         if plots:
             F = log["thrust"][i]

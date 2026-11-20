@@ -2,6 +2,7 @@
 import csv
 import os
 from collections.abc import Callable
+from typing import TextIO
 
 import numpy as np
 import torch
@@ -42,7 +43,7 @@ class EvalLog:
     def __init__(self, name: str):
         os.makedirs("results", exist_ok=True)
         self.path = f"results/{name}.csv"
-        self.file = None
+        self.file: TextIO | None = None
 
     def write(self, step: int, wall_time: float, metrics: dict[str, float]):
         row = {"step": step, "wall_time": round(wall_time, 1), **{k: round(v, 4) for k, v in metrics.items()}}

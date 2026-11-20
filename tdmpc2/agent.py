@@ -1,6 +1,7 @@
 """Minimal single-task TD-MPC2 (Hansen et al., 2024) with a termination head, CPU friendly."""
 import copy
 import os
+from typing import Any
 
 import numpy as np
 import torch
@@ -9,7 +10,6 @@ import torch.nn.functional as F
 from torch import Tensor
 
 from configs import Config
-
 
 # --- math helpers ----------------------------------------------------------------------------------
 
@@ -65,9 +65,10 @@ class SimNorm(nn.Module):
 
 
 def mlp(in_dim: int, hidden: list[int], out_dim: int, out_act: nn.Module | None = None,
-        dropout=0.0) -> nn.Sequential:
+        dropout: float = 0.0) -> nn.Sequential:
     """Linear -> LayerNorm -> SiLU blocks; out_act adds LayerNorm + out_act to the last layer."""
-    layers, d = [], in_dim
+    layers: list[nn.Module] = []
+    d = in_dim
     for i, h in enumerate(hidden):
         layers += [nn.Linear(d, h)]
         if dropout and i == 0:
@@ -83,14 +84,16 @@ def mlp(in_dim: int, hidden: list[int], out_dim: int, out_act: nn.Module | None 
 class EnsembleMLP(nn.Module):
     """n copies of mlp() in one batched matmul per layer; idx computes only some copies."""
 
-    def __init__(self, n: int, in_dim: int, hidden: list[int], out_dim: int, dropout=0.0):
+    def __init__(self, n: int, in_dim: int, hidden: list[int], out_dim: int, dropout: float = 0.0):
         super().__init__()
         dims = [in_dim, *hidden, out_dim]
         self.weights, self.biases = nn.ParameterList(), nn.ParameterList()
-        for d_in, d_out in zip(dims[:-1], dims[1:]):
+        for d_in, d_out in zip(dims[:-1], dims[1:], strict=True):
             layers = [nn.Linear(d_in, d_out) for _ in range(n)]  # nn.Linear's initialisation, per copy
-            self.weights.append(nn.Parameter(torch.stack([l.weight.T for l in layers]).detach()))  # (n, in, out)
-            self.biases.append(nn.Parameter(torch.stack([l.bias for l in layers]).unsqueeze(1).detach()))  # (n, 1, out)
+            weight = torch.stack([layer.weight.T for layer in layers])  # (n, in, out)
+            bias = torch.stack([layer.bias for layer in layers]).unsqueeze(1)  # (n, 1, out)
+            self.weights.append(nn.Parameter(weight.detach()))
+            self.biases.append(nn.Parameter(bias.detach()))
         self.norm_w = nn.ParameterList([nn.Parameter(torch.ones(n, 1, h)) for h in hidden])  # LayerNorm affine
         self.norm_b = nn.ParameterList([nn.Parameter(torch.zeros(n, 1, h)) for h in hidden])
         self.dropout = dropout
@@ -99,7 +102,7 @@ class EnsembleMLP(nn.Module):
         pick = (lambda p: p) if idx is None else (lambda p: p[idx])
         lead = x.shape[:-1]
         x = x.reshape(1, -1, x.shape[-1]).expand(pick(self.weights[0]).shape[0], -1, -1)  # same input to every copy
-        for i, (w, b) in enumerate(zip(self.weights, self.biases)):
+        for i, (w, b) in enumerate(zip(self.weights, self.biases, strict=True)):
             x = torch.baddbmm(pick(b), x, pick(w))
             if i < len(self.norm_w):  # hidden layer: (dropout) -> LayerNorm -> SiLU, as in mlp()
                 if self.dropout and i == 0:
@@ -159,7 +162,7 @@ class WorldModel(nn.Module):
         log_prob = log_prob - torch.log(F.relu(1 - action.pow(2)) + 1e-6).sum(-1, keepdim=True)
         return mean, action, log_prob
 
-    def q(self, z: Tensor, a: Tensor, two_hot: TwoHot, mode="min", target=False) -> Tensor:
+    def q(self, z: Tensor, a: Tensor, two_hot: TwoHot, mode: str = "min", target: bool = False) -> Tensor:
         """mode="all": logits of every head; "min"/"avg": min/mean value of two random heads."""
         qs, za = (self.target_qs if target else self.qs), torch.cat([z, a], -1)
         if mode == "all":
@@ -197,7 +200,8 @@ class TDMPC2:
     # --- acting ---
 
     @torch.no_grad()
-    def act(self, obs: np.ndarray, t0=False, eval_mode=False, plan=True) -> np.ndarray:
+    def act(self, obs: np.ndarray, t0: bool = False, eval_mode: bool = False,
+            plan: bool = True) -> np.ndarray:
         """t0: first step of an episode (resets the MPPI warm start). plan=False uses the policy prior only."""
         self.model.eval()
         z = self.model.encoder(torch.as_tensor(obs, dtype=torch.float32).unsqueeze(0))
@@ -210,7 +214,7 @@ class TDMPC2:
 
     def _estimate_value(self, z: Tensor, actions: Tensor) -> Tensor:
         """Discounted return of action sequences (H, N, A) from z (N, Z), plus a Q bootstrap (Eq. 6)."""
-        G, discount, done = 0, 1, torch.zeros(z.shape[0], 1)
+        G, discount, done = torch.zeros(()), 1, torch.zeros(z.shape[0], 1)
         for a in actions:
             r = self.two_hot.decode(self.model.reward(torch.cat([z, a], -1)))
             z = self.model.next(z, a)
@@ -244,7 +248,7 @@ class TDMPC2:
             mean = (score * elite_actions).sum(1)
             std = ((score * (elite_actions - mean.unsqueeze(1)) ** 2).sum(1)).sqrt().clamp(c.min_std, c.max_std)
         # Pick an elite in proportion to its score; execute its first action
-        idx = torch.multinomial(score.view(-1), 1).item()
+        idx = int(torch.multinomial(score.view(-1), 1).item())
         a = elite_actions[0, idx]
         if not eval_mode:
             a = a + std[0] * torch.randn(A)
@@ -266,7 +270,7 @@ class TDMPC2:
         pi_loss = self._update_pi(zs.detach())
 
         with torch.no_grad():
-            for p, tp in zip(m.qs.parameters(), m.target_qs.parameters()):
+            for p, tp in zip(m.qs.parameters(), m.target_qs.parameters(), strict=True):
                 tp.lerp_(p, c.tau)  # Q̄: slow-moving copies of Q, for the TD target
         return {**losses, "pi": pi_loss, "grad_norm": grad_norm.item(), "q_scale": float(self.scale.value)}
 
@@ -282,13 +286,13 @@ class TDMPC2:
 
         # Roll the latent dynamics forward from the first observation only
         z = m.encoder(obs[0])
-        zs = [z]
-        consistency = 0
+        latents = [z]
+        consistency = torch.zeros(())
         for t in range(c.horizon):
             z = m.next(z, action[t])
             consistency = consistency + c.rho ** t * F.mse_loss(z, next_z[t])
-            zs.append(z)
-        zs = torch.stack(zs)
+            latents.append(z)
+        zs = torch.stack(latents)
         _zs = zs[:-1]
         qs = m.q(_zs, action, self.two_hot, "all")  # (num_q, H, B, bins)
         reward_logits = m.reward(torch.cat([_zs, action], -1))
@@ -325,7 +329,7 @@ class TDMPC2:
 
     # --- checkpoints ---
 
-    def save(self, path: str, **meta):
+    def save(self, path: str, **meta: Any):
         """Written to a temporary file first, so a load started mid-save never reads a half-written file."""
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         torch.save({"model": self.model.state_dict(), "cfg": self.cfg.to_dict(), "obs_dim": self.obs_dim,

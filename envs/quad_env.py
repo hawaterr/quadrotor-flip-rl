@@ -4,6 +4,7 @@ from collections import deque
 import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
+from numpy.typing import ArrayLike
 
 from configs import Config, load_env
 from envs.quadrotor import G, Quadrotor
@@ -14,13 +15,16 @@ ACTOR_BASE_DIM = 3 + 1          # gravity in body frame, elapsed share of the ep
 FRAME_DIM = 3 + 3 + ACT_DIM     # gyro, accelerometer, action
 STATE_DIM = 9 + 3 + 3 + 3       # rotation matrix, body rates, velocity, position error
 FLIP_DIM = 1 + 1                # roll progress, flip done flag
+SMALL_TILT = 1e-8  # rad; below this the tilt axis is undefined
 N_PARAM_OBS = 1 + 1 + 3 + 1 + 1 + 1 + 1  # hover thrust, thrust curve, inertia, motor lag, drag xy, drag z, latency
 
 
 class QuadEnv(gym.Env):
+    """Quadrotor task env; observations are the actor's inputs first, then privileged ones for the critic."""
+
     metadata = {"render_modes": []}
 
-    def __init__(self, task="flip", cfg: Config | None = None, training=False):
+    def __init__(self, task: str = "flip", cfg: Config | None = None, training: bool = False):
         """cfg: env config (default configs/env.yaml); training: enables mid-flip starts."""
         self.cfg = cfg if cfg is not None else load_env(task)
         self.task = self.cfg.task
@@ -37,13 +41,13 @@ class QuadEnv(gym.Env):
         self.w_scale, self.v_scale, self.pos_scale = scale.body_rate, scale.velocity, scale.position
         self.latency_range = [int(round(s / self.quad.dt)) for s in self.cfg.latency]
         self.randomisation = self.cfg.randomisation
-        self.params = {}
+        self.params: dict[str, float | np.ndarray] = {}
 
-        self.action_space = spaces.Box(-1.0, 1.0, shape=(ACT_DIM,), dtype=np.float32)
+        self.action_space: spaces.Box = spaces.Box(-1.0, 1.0, shape=(ACT_DIM,), dtype=np.float32)
         flip_dim = FLIP_DIM if self.task == "flip" else 0
         self.n_actor_obs = ACTOR_BASE_DIM + FRAME_DIM * self.history_len + flip_dim
         n_obs = self.n_actor_obs + STATE_DIM + flip_dim + (N_PARAM_OBS if self.randomisation else 0)
-        self.observation_space = spaces.Box(-np.inf, np.inf, shape=(n_obs,), dtype=np.float32)
+        self.observation_space: spaces.Box = spaces.Box(-np.inf, np.inf, shape=(n_obs,), dtype=np.float32)
 
     def scale_action(self, a: np.ndarray) -> tuple[float, np.ndarray]:
         """Action in [-1, 1] -> (thrust / mass [m/s^2], body rates [rad/s]); a[0] = 0 is hover."""
@@ -56,9 +60,9 @@ class QuadEnv(gym.Env):
 
     def _obs(self) -> np.ndarray:
         q, est = self.quad, self.estimator
-        actor = [est.gravity_body, [self.t / self.max_steps], *self.history]
-        privileged = [q.R.flatten(), q.w / self.w_scale, q.v / self.v_scale,
-                      (q.p - self.target) / self.pos_scale]
+        actor: list[ArrayLike] = [est.gravity_body, [self.t / self.max_steps], *self.history]
+        privileged: list[ArrayLike] = [q.R.flatten(), q.w / self.w_scale, q.v / self.v_scale,
+                                       (q.p - self.target) / self.pos_scale]
         if self.task == "flip":
             # Before and after the flip look the same, so the agent needs its roll progress
             actor += [[est.roll_progress / (2 * np.pi)], [float(self.est_flip_done)]]
@@ -93,7 +97,7 @@ class QuadEnv(gym.Env):
         if self.task == "flip" and self.np_random.random() < prob:
             self._mid_flip_start()
         self.best_progress = np.clip(self.roll_progress, 0, 2 * np.pi)
-        self.prev_action = np.zeros(ACT_DIM)
+        self.prev_action: np.ndarray = np.zeros(ACT_DIM)
         self.t = 0
 
         rng = self.np_random
@@ -104,7 +108,7 @@ class QuadEnv(gym.Env):
         self.est_flip_done = False
         self._update_est_flip_done()
         gyro, accel = self.imu.read(*self.quad.imu)
-        self.history = []
+        self.history: list[np.ndarray] = []
         for _ in range(self.history_len):
             self._push_frame(gyro, accel, self.prev_action)
 
@@ -120,14 +124,17 @@ class QuadEnv(gym.Env):
     def _randomise_dynamics(self):
         """Draw this episode's true dynamics; param_obs holds them scaled to [-1, 1] for the critic."""
         rng, dr = self.np_random, self.randomisation
-        draw = lambda name, n=None: rng.uniform(*dr[name], n)
+
+        def draw(name: str, n: int | None = None) -> float | np.ndarray:
+            return rng.uniform(*dr[name], n)
+
         drag_xy, drag_z = draw("drag_xy"), draw("drag_z")
         p = self.params = dict(hover_thrust=draw("hover_thrust"), thrust_curve=draw("thrust_curve"),
                                inertia=draw("inertia", 3), motor_tau=draw("motor_tau"),
                                drag=np.array([drag_xy, drag_xy, drag_z]))
         self.quad.set_params(**p)
 
-        def scaled(value, lo, hi):
+        def scaled(value: float | np.ndarray, lo: float, hi: float) -> np.ndarray:
             return np.zeros_like(value) if hi == lo else (np.asarray(value) - (lo + hi) / 2) / ((hi - lo) / 2)
         self.param_obs = np.concatenate([
             [scaled(p["hover_thrust"], *dr.hover_thrust), scaled(p["thrust_curve"], *dr.thrust_curve)],
@@ -141,7 +148,7 @@ class QuadEnv(gym.Env):
         min_std = 0.0 if exact else start.min_std
         axis_angle = rng.normal(0, start.tilt_std, 3)
         angle = np.linalg.norm(axis_angle)
-        axis = axis_angle / angle if angle > 1e-8 else np.array([1.0, 0, 0])
+        axis = axis_angle / angle if angle > SMALL_TILT else np.array([1.0, 0, 0])
         q0 = np.concatenate([[np.cos(angle / 2)], np.sin(angle / 2) * axis])
         self.quad.reset(
             p=self.target + rng.uniform(-start.pos_range, start.pos_range, 3),
@@ -172,7 +179,7 @@ class QuadEnv(gym.Env):
         self.t += 1
 
         q = self.quad
-        dist = np.linalg.norm(q.p - self.target)
+        dist = np.linalg.norm(q.p - self.target)  # np.float64, not float: keeps the reward float64 (NumPy 2)
         if self.task == "hover":
             reward, terminated = self._hover_reward(action, dist)
         else:
@@ -191,10 +198,10 @@ class QuadEnv(gym.Env):
         return self._obs(), float(reward), terminated, truncated, {
             "dist": dist, "flip_done": self.flip_done, "roll_progress": self.roll_progress, "crashed": crashed}
 
-    def _terminated(self, dist: float) -> bool:
+    def _terminated(self, dist: np.floating) -> bool:
         return bool(self.quad.p[2] < self.cfg.min_height or dist > self.cfg.max_dist)
 
-    def _hover_reward(self, action: np.ndarray, dist: float) -> tuple[float, bool]:
+    def _hover_reward(self, action: np.ndarray, dist: np.floating) -> tuple[float, bool]:
         q, r = self.quad, self.cfg.reward
         upright = q.R[2, 2]  # 1 = level, -1 = upside down
         reward = r.alive - r.dist * dist
@@ -204,7 +211,7 @@ class QuadEnv(gym.Env):
         reward -= r.smooth * np.sum((action - self.prev_action) ** 2)
         return reward, self._terminated(dist)
 
-    def _flip_reward(self, action: np.ndarray, dist: float) -> tuple[float, bool]:
+    def _flip_reward(self, action: np.ndarray, dist: np.floating) -> tuple[float, bool]:
         q, r = self.quad, self.cfg.reward
         upright = q.R[2, 2]
         reward = 0.0

@@ -3,6 +3,7 @@ import os
 
 import mujoco
 import numpy as np
+from numpy.typing import ArrayLike
 
 from configs import Config
 
@@ -13,6 +14,8 @@ MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "quadrotor
 
 
 class Quadrotor:
+    """MuJoCo quadrotor flown through a rate controller: collective thrust and body rate commands."""
+
     def __init__(self, cfg: Config):
         """cfg: the `dynamics` section of configs/env.yaml."""
         self.model = mujoco.MjModel.from_xml_path(MODEL_PATH)
@@ -50,8 +53,8 @@ class Quadrotor:
         self.set_params()
         self.reset()
 
-    def set_params(self, hover_thrust=1.0, thrust_curve=0.0, inertia=(1.0, 1.0, 1.0), motor_tau=1.0,
-                   drag=(1.0, 1.0, 1.0)):
+    def set_params(self, hover_thrust: float = 1.0, thrust_curve: float = 0.0, inertia: ArrayLike = (1.0, 1.0, 1.0),
+                   motor_tau: float = 1.0, drag: ArrayLike = (1.0, 1.0, 1.0)):
         """Set the plant's true dynamics, as multiples of nominal; the controller keeps assuming nominal."""
         self.hover_thrust, self.thrust_curve = hover_thrust, thrust_curve
         inertia = self.I * np.asarray(inertia)
@@ -67,7 +70,8 @@ class Quadrotor:
         c = motors / self.max_motor_thrust
         return motors * self.hover_thrust * (1.0 + self.thrust_curve * (c - self.hover_cmd))
 
-    def reset(self, p=None, v=None, q=None, w=None):
+    def reset(self, p: ArrayLike | None = None, v: ArrayLike | None = None, q: ArrayLike | None = None,
+              w: ArrayLike | None = None):
         mujoco.mj_resetData(self.model, self.data)
         self.p = np.zeros(3) if p is None else p
         self.v = np.zeros(3) if v is None else v
@@ -77,35 +81,35 @@ class Quadrotor:
         self.saturation = SAT_NONE
 
     @property
-    def p(self):
+    def p(self) -> np.ndarray:
         return self.data.qpos[:3]
 
     @p.setter
-    def p(self, value):
+    def p(self, value: ArrayLike):
         self.data.qpos[:3] = value
 
     @property
-    def v(self):
+    def v(self) -> np.ndarray:
         return self.data.qvel[:3]
 
     @v.setter
-    def v(self, value):
+    def v(self, value: ArrayLike):
         self.data.qvel[:3] = value
 
     @property
-    def q(self):
+    def q(self) -> np.ndarray:
         return self.data.qpos[3:7]
 
     @q.setter
-    def q(self, value):
+    def q(self, value: ArrayLike):
         self.data.qpos[3:7] = value
 
     @property
-    def w(self):
+    def w(self) -> np.ndarray:
         return self.data.qvel[3:6]
 
     @w.setter
-    def w(self, value):
+    def w(self, value: ArrayLike):
         self.data.qvel[3:6] = value
 
     @property
@@ -130,7 +134,7 @@ class Quadrotor:
         return self.data.act.sum() / self.m
 
     @thrust_acc.setter
-    def thrust_acc(self, value):
+    def thrust_acc(self, value: float):
         self.data.act[:] = self.m * value / N_MOTORS
 
     def _mix(self, thrust: float, torque: np.ndarray) -> np.ndarray:
@@ -185,7 +189,8 @@ if __name__ == "__main__":
     quad.thrust_acc = 0.0
     for _ in range(int(1.0 / quad.dt)):  # 1 s free fall
         quad.step(0.0, np.zeros(3))
-    print(f"free fall 1s: z={quad.p[2]:.2f} (no drag: ~{10 - 0.5 * G:.2f} minus a bit of thrust lag; vertical drag slows it)")
+    print(f"free fall 1s: z={quad.p[2]:.2f} (no drag: ~{10 - 0.5 * G:.2f} minus a bit of thrust lag; "
+          "vertical drag slows it)")
 
     quad.reset(p=[0, 0, 2])
     for _ in range(int(2.0 / quad.dt)):  # 2 s hover

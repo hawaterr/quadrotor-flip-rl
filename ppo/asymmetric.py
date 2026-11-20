@@ -1,6 +1,8 @@
 """Asymmetric actor-critic PPO policy: the actor sees only the first n_actor observations."""
-from torch import Tensor, nn
+from typing import Any
+
 from stable_baselines3.common.policies import ActorCriticPolicy
+from torch import Tensor, nn
 
 
 def mlp(n_in: int, sizes: list[int], activation_fn: type[nn.Module]) -> tuple[nn.Sequential, int]:
@@ -36,12 +38,12 @@ class SplitMlpExtractor(nn.Module):
 class AsymmetricPolicy(ActorCriticPolicy):
     """ActorCriticPolicy whose actor sees only obs[:n_actor] (pass n_actor in policy_kwargs)."""
 
-    def __init__(self, *args, n_actor: int, **kwargs):
+    def __init__(self, *args: Any, n_actor: int, **kwargs: Any):
         self.n_actor = n_actor  # set before super().__init__, which builds the networks
         super().__init__(*args, **kwargs)
 
     def _build_mlp_extractor(self):
         self.mlp_extractor = SplitMlpExtractor(self.n_actor, self.features_dim, self.net_arch, self.activation_fn)
 
-    def _get_constructor_parameters(self):
+    def _get_constructor_parameters(self) -> dict[str, Any]:
         return {**super()._get_constructor_parameters(), "n_actor": self.n_actor}

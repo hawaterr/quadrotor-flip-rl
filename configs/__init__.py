@@ -1,8 +1,10 @@
 """Config loading: the YAML files here, merged, with key=value command-line overrides."""
 import os
 import sys
+from collections.abc import Mapping
+from typing import Any, cast
 
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import Container, DictConfig, OmegaConf
 
 CONFIG_DIR = os.path.dirname(os.path.abspath(__file__))
 TASKS = ("hover", "flip")  # QuadEnv tasks; configs have a section per task
@@ -11,10 +13,10 @@ TASKS = ("hover", "flip")  # QuadEnv tasks; configs have a section per task
 class Config(dict):
     """Nested dict with attribute access (cfg.env.reward.smooth). Plain Python, so it is fast in hot loops."""
 
-    def __init__(self, d=()):
+    def __init__(self, d: Mapping):
         super().__init__({k: Config(v) if isinstance(v, dict) else v for k, v in dict(d).items()})
 
-    def __getattr__(self, key):
+    def __getattr__(self, key: str) -> Any:  # noqa: ANN401 (config values have any type)
         try:
             return self[key]
         except KeyError:
@@ -25,20 +27,25 @@ class Config(dict):
         return {k: v.to_dict() if isinstance(v, Config) else v for k, v in self.items()}
 
 
+def from_omegaconf(cfg: Container) -> Config:
+    """A plain Config from an OmegaConf config of a YAML mapping."""
+    return Config(cast(dict, OmegaConf.to_container(cfg)))
+
+
 def _load(name: str) -> DictConfig:
-    return OmegaConf.load(os.path.join(CONFIG_DIR, f"{name}.yaml"))
+    return cast(DictConfig, OmegaConf.load(os.path.join(CONFIG_DIR, f"{name}.yaml")))
 
 
 def _env_section(task: str) -> DictConfig:
     """env.yaml's shared settings plus the section for `task`, as an OmegaConf config."""
     raw = _load("env")
     shared = {k: v for k, v in raw.items() if k not in TASKS}
-    return OmegaConf.merge(shared, {"mid_flip": None}, raw[task], {"task": task})
+    return cast(DictConfig, OmegaConf.merge(shared, {"mid_flip": None}, raw[task], {"task": task}))
 
 
 def load_env(task: str) -> Config:
     """The env config for `task` on its own (scripts without an algorithm config)."""
-    return Config(OmegaConf.to_container(_env_section(task)))
+    return from_omegaconf(_env_section(task))
 
 
 def load_config(name: str, argv: list[str] | None = None) -> Config:
@@ -53,5 +60,4 @@ def load_config(name: str, argv: list[str] | None = None) -> Config:
         cfg.env = _env_section(task)
     OmegaConf.set_struct(cfg, True)  # from here on, merging an unknown key is an error
     task_section = raw.get(task) if task is not None else None
-    cfg = OmegaConf.merge(cfg, task_section or {}, cli)
-    return Config(OmegaConf.to_container(cfg))
+    return from_omegaconf(OmegaConf.merge(cfg, task_section or {}, cli))
