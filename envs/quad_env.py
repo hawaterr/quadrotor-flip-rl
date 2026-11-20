@@ -18,7 +18,8 @@ Observation = [actor part, privileged part] (asymmetric actor-critic, ppo/asymme
         No position, no velocity: the drone can't measure them.
     privileged part: the ground-truth state, read only by the critic (training in sim): rotation matrix (9), body
         rates (3), velocity (3), position error (3); flip only: + true roll progress (1) + true flip done flag (1);
-        with domain randomisation and critic_params: + this episode's dynamics (N_PARAM_OBS).
+        with domain randomisation and critic_params: + this episode's dynamics (PARAM_OBS).
+    Body rates, velocity and position are divided by `obs_scale` (configs/env.yaml).
 The reward is computed from the ground truth (training only).
 
 Domain randomisation (`randomisation` in configs/env.yaml, null = off): each episode draws the true dynamics (thrust
@@ -43,13 +44,6 @@ from configs import load_env
 from envs.quadrotor import G, Quadrotor
 from envs.sensors import AttitudeEstimator, ImuModel, axis_angle_quat, quat_multiply
 
-# Observation scaling, to keep inputs roughly in [-1, 1]. Fixed, not a config setting: trained models
-# depend on it, so changing it would silently break them.
-W_SCALE = 10.0    # rad/s
-V_SCALE = 5.0     # m/s
-POS_SCALE = 2.0   # m
-# Randomised dynamics in the critic's observation: hover thrust, thrust curve, inertia (3), motor lag, drag x/y,
-# drag z, latency
 N_PARAM_OBS = 9
 
 
@@ -70,6 +64,8 @@ class QuadEnv(gym.Env):
         self.imu = ImuModel(self.cfg.sensors)
         self.estimator = AttitudeEstimator()
         self.history_len = self.cfg.history
+        scale = self.cfg.obs_scale
+        self.w_scale, self.v_scale, self.pos_scale = scale.body_rate, scale.velocity, scale.position
         # Latency, in physics steps. Models saved before it existed have no `latency`: none
         latency = self.cfg.get("latency") or [0.0, 0.0]
         self.latency_range = [int(round(s / self.quad.dt)) for s in latency]
@@ -98,7 +94,8 @@ class QuadEnv(gym.Env):
     def _obs(self):
         q, est = self.quad, self.estimator
         actor = [est.gravity_body, [self.t / self.max_steps], *self.history]
-        privileged = [q.R.flatten(), q.w / W_SCALE, q.v / V_SCALE, (q.p - self.target) / POS_SCALE]
+        privileged = [q.R.flatten(), q.w / self.w_scale, q.v / self.v_scale,
+                      (q.p - self.target) / self.pos_scale]
         if self.task == "flip":
             # Attitude alone can't tell "before flip" from "after flip" (both upright),
             # so the agent needs to know how far it has rotated.
@@ -110,7 +107,7 @@ class QuadEnv(gym.Env):
 
     def _push_frame(self, gyro, accel, action):
         """Newest IMU reading and the action taken, at the front of the history."""
-        self.history.insert(0, np.concatenate([gyro / W_SCALE, accel / G, action]))
+        self.history.insert(0, np.concatenate([gyro / self.w_scale, accel / G, action]))
         del self.history[self.history_len:]
 
     def _read_imu(self):
