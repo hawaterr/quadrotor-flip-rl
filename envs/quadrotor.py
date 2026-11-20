@@ -5,6 +5,8 @@ import mujoco
 import numpy as np
 
 G = 9.81
+N_MOTORS = 4
+SAT_NONE, SAT_YAW, SAT_COLLECTIVE, SAT_ROLL_PITCH = 0, 1, 2, 3  # highest priority not delivered
 MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "quadrotor.xml")
 
 
@@ -22,7 +24,7 @@ class Quadrotor:
         offset = cfg.arm_length / np.sqrt(2)
         x, y = offset * np.array([1.0, 1, -1, -1]), offset * np.array([1.0, -1, -1, 1])
         yaw = cfg.yaw_torque_per_thrust * np.array([1.0, -1, 1, -1])
-        motors = [mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SITE, f"motor{i}") for i in range(4)]
+        motors = [mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SITE, f"motor{i}") for i in range(N_MOTORS)]
         self.model.site_pos[motors, 0], self.model.site_pos[motors, 1] = x, y
         self.model.actuator_gear[:, 5] = yaw
         self.model.actuator_dynprm[:, 0] = cfg.thrust_tau
@@ -30,13 +32,13 @@ class Quadrotor:
         self.data = mujoco.MjData(self.model)
 
         # (collective, roll, pitch, yaw torque) = allocation @ motor thrusts; _mix() handles the collective
-        allocation = np.array([np.ones(4), y, -x, yaw])
+        allocation = np.array([np.ones(N_MOTORS), y, -x, yaw])
         self.torque_to_motors = np.linalg.inv(allocation)[:, 1:]
 
         self.m = cfg.mass
         self.I = np.array(cfg.inertia, float)  # assumed by the rate controller
         self.max_thrust_acc = cfg.thrust_to_weight * G  # max collective thrust / mass
-        self.max_motor_thrust = self.m * self.max_thrust_acc / 4  # N
+        self.max_motor_thrust = self.m * self.max_thrust_acc / N_MOTORS  # N
         self.hover_cmd = 1.0 / cfg.thrust_to_weight  # motor command at hover
         self.max_rate = cfg.max_rate
         self.drag_nominal = np.array(cfg.drag, float)
@@ -70,7 +72,7 @@ class Quadrotor:
         self.q = np.array([1.0, 0, 0, 0]) if q is None else q
         self.w = np.zeros(3) if w is None else w
         self.thrust_acc = G  # start at hover thrust
-        self.saturation = 0
+        self.saturation = SAT_NONE
 
     @property
     def p(self):
@@ -127,24 +129,24 @@ class Quadrotor:
 
     @thrust_acc.setter
     def thrust_acc(self, value):
-        self.data.act[:] = self.m * value / 4
+        self.data.act[:] = self.m * value / N_MOTORS
 
     def _mix(self, thrust, torque):
         """Motor thrusts [N] for a collective thrust [N] and body torque [N m]; priority roll/pitch, collective, yaw."""
         limit = self.max_motor_thrust
-        self.saturation = 0
+        self.saturation = SAT_NONE
 
         # Roll and pitch: scaled down to fit, keeping the rotation axis
         roll_pitch = self.torque_to_motors[:, :2] @ torque[:2]
         spread = roll_pitch.max() - roll_pitch.min()
         if spread > limit:
             roll_pitch = roll_pitch * limit / spread
-            self.saturation = 3
+            self.saturation = SAT_ROLL_PITCH
 
         # Collective: moved as little as needed
-        per_motor = np.clip(thrust / 4, -roll_pitch.min(), limit - roll_pitch.max())
-        if per_motor != thrust / 4 and self.saturation == 0:
-            self.saturation = 2
+        per_motor = np.clip(thrust / N_MOTORS, -roll_pitch.min(), limit - roll_pitch.max())
+        if per_motor != thrust / N_MOTORS and self.saturation == SAT_NONE:
+            self.saturation = SAT_COLLECTIVE
         motors = per_motor + roll_pitch
 
         # Yaw: scaled down to the range left
@@ -154,7 +156,7 @@ class Quadrotor:
             needed = np.abs(yaw)
             if np.any(needed > room):
                 yaw = yaw * max(0.0, np.min(room / needed))
-                self.saturation = self.saturation or 1
+                self.saturation = self.saturation or SAT_YAW
         return np.clip(motors + yaw, 0.0, limit)  # rounding errors only
 
     def step(self, thrust_acc_cmd, rate_cmd):
@@ -179,12 +181,12 @@ if __name__ == "__main__":
 
     quad.reset(p=[0, 0, 10])
     quad.thrust_acc = 0.0
-    for _ in range(500):  # 1 s free fall
+    for _ in range(int(1.0 / quad.dt)):  # 1 s free fall
         quad.step(0.0, np.zeros(3))
     print(f"free fall 1s: z={quad.p[2]:.2f} (no drag: ~{10 - 0.5 * G:.2f} minus a bit of thrust lag; vertical drag slows it)")
 
     quad.reset(p=[0, 0, 2])
-    for _ in range(1000):  # 2 s hover
+    for _ in range(int(2.0 / quad.dt)):  # 2 s hover
         quad.step(G, np.zeros(3))
     print(f"hover 2s: z={quad.p[2]:.3f} (expect 2.000)")
 

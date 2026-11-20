@@ -9,7 +9,12 @@ from configs import load_env
 from envs.quadrotor import G, Quadrotor
 from envs.sensors import AttitudeEstimator, ImuModel, axis_angle_quat, quat_multiply
 
-N_PARAM_OBS = 9
+ACT_DIM = 4                     # collective thrust, roll, pitch, yaw rate
+ACTOR_BASE_DIM = 3 + 1          # gravity in body frame, elapsed share of the episode
+FRAME_DIM = 3 + 3 + ACT_DIM     # gyro, accelerometer, action
+STATE_DIM = 9 + 3 + 3 + 3       # rotation matrix, body rates, velocity, position error
+FLIP_DIM = 1 + 1                # roll progress, flip done flag
+N_PARAM_OBS = 1 + 1 + 3 + 1 + 1 + 1 + 1  # hover thrust, thrust curve, inertia, motor lag, drag xy, drag z, latency
 
 
 class QuadEnv(gym.Env):
@@ -34,10 +39,10 @@ class QuadEnv(gym.Env):
         self.randomisation = self.cfg.randomisation
         self.params = {}
 
-        self.action_space = spaces.Box(-1.0, 1.0, shape=(4,), dtype=np.float32)
-        flip_extra = 2 if self.task == "flip" else 0  # roll progress + flip done flag
-        self.n_actor_obs = 4 + 10 * self.history_len + flip_extra
-        n_obs = self.n_actor_obs + 18 + flip_extra + (N_PARAM_OBS if self.randomisation else 0)
+        self.action_space = spaces.Box(-1.0, 1.0, shape=(ACT_DIM,), dtype=np.float32)
+        flip_dim = FLIP_DIM if self.task == "flip" else 0
+        self.n_actor_obs = ACTOR_BASE_DIM + FRAME_DIM * self.history_len + flip_dim
+        n_obs = self.n_actor_obs + STATE_DIM + flip_dim + (N_PARAM_OBS if self.randomisation else 0)
         self.observation_space = spaces.Box(-np.inf, np.inf, shape=(n_obs,), dtype=np.float32)
 
     def scale_action(self, a):
@@ -88,7 +93,7 @@ class QuadEnv(gym.Env):
         if self.task == "flip" and self.np_random.random() < prob:
             self._mid_flip_start()
         self.best_progress = np.clip(self.roll_progress, 0, 2 * np.pi)
-        self.prev_action = np.zeros(4)
+        self.prev_action = np.zeros(ACT_DIM)
         self.t = 0
 
         rng = self.np_random

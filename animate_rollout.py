@@ -12,7 +12,7 @@ from PIL import Image
 from configs import TASKS, Config, load_config, load_env
 from envs.evaluation import SETTLE_WINDOW
 from envs.quad_env import QuadEnv
-from envs.quadrotor import G
+from envs.quadrotor import SAT_COLLECTIVE, SAT_ROLL_PITCH, SAT_YAW, G
 
 ARROW_PER_HOVER = 0.12  # thrust arrow length [m] at hover thrust (m*g)
 VIEW_SIZE = {True: (400, 800), False: (500, 500)}  # (height, width) px, with / without plots
@@ -125,7 +125,7 @@ def rollout(env, policy, seed):
     log = {"p": [], "q": [], "R": [], "r": [], "dist": [], "revs": [], "done": [], "thrust": [],
            "thrust_cmd": [], "rate_cmd": [], "w": [], "speed": [], "mass": env.quad.m, "task": env.task,
            "action_change": [],  # sum |a - previous a|
-           "saturation": [],  # 0 none, 1 yaw, 2 collective, 3 roll/pitch
+           "saturation": [],  # Quadrotor.saturation
            "infer_ms": []}  # ms per policy call
     total = 0.0
 
@@ -180,8 +180,8 @@ def print_summary(log, env):
     print(f"last {SETTLE_WINDOW} s: mean dist={np.mean(log['dist'][-tail:]):.3f}  "
           f"mean speed={np.mean(log['speed'][-tail:]):.2f}  final speed={log['speed'][-1]:.2f}")
     saturation = np.array(log["saturation"])
-    print(f"motor limits, share of steps: yaw reduced {100 * np.mean(saturation == 1):.0f}%, collective changed "
-          f"{100 * np.mean(saturation == 2):.0f}%, roll/pitch reduced {100 * np.mean(saturation == 3):.0f}%")
+    print(f"motor limits, share of steps: yaw reduced {100 * np.mean(saturation == SAT_YAW):.0f}%, collective changed "
+          f"{100 * np.mean(saturation == SAT_COLLECTIVE):.0f}%, roll/pitch reduced {100 * np.mean(saturation == SAT_ROLL_PITCH):.0f}%")
     # Skip the first call (warm-up)
     infer_ms = log["infer_ms"]
     steady = np.array(infer_ms[1:] or infer_ms)

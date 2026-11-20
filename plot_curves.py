@@ -9,7 +9,7 @@ import numpy as np
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
-from configs import load_config  # noqa: E402
+from configs import load_config, load_env  # noqa: E402
 
 # Line colours (one per curve, in order), then background, text, secondary text and grid
 SERIES = ["#2a78d6", "#eb6834", "#1baf7a"]
@@ -61,7 +61,7 @@ def plot(curves, log_x, out):
             std = y.std(axis=0, ddof=1)  # sample std over seeds
             ax.fill_between(step, mean - std, mean + std, color=color, alpha=0.18, lw=0)
     ax.set_title("Total episode reward", loc="left", fontsize=11, color=TEXT)
-    ax.set_xlabel("env steps (0.02 s each)")
+    ax.set_xlabel(f"env steps ({load_env('flip').policy_dt} s each)")
     ax.set_ylabel("total reward per episode\n(mean ± std over training seeds)")
     if log_x:
         ax.set_xscale("symlog", linthresh=1e3)  # symlog: the first evaluation is at step 0
