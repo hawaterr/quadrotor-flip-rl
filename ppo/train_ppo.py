@@ -14,16 +14,16 @@ from envs.quad_env import QuadEnv
 from ppo.asymmetric import AsymmetricPolicy
 
 
-def model_name(cfg):
+def model_name(cfg: Config) -> str:
     return cfg.name or f"ppo_{cfg.task}"
 
 
-def saved_env_config(name):
+def saved_env_config(name: str) -> Config:
     """The env config saved next to models/<name>.zip."""
     return Config(OmegaConf.to_container(OmegaConf.load(f"models/{name}.yaml"))["env"])
 
 
-def save(model, cfg):
+def save(model: PPO, cfg: Config):
     """Save the model and its config, via temp files so readers never see half-written files."""
     path = f"models/{model_name(cfg)}"
     os.makedirs("models", exist_ok=True)
@@ -36,7 +36,7 @@ def save(model, cfg):
 class PeriodicSaveAndEval(BaseCallback):
     """Save every save_every and evaluate every eval_every env steps."""
 
-    def __init__(self, cfg):
+    def __init__(self, cfg: Config):
         super().__init__()
         self.cfg, self.next_save, self.next_eval = cfg, cfg.save_every, 0
         self.log, self.start = EvalLog(model_name(cfg)), time.time()
@@ -55,7 +55,7 @@ class PeriodicSaveAndEval(BaseCallback):
         return True
 
 
-def train(cfg):
+def train(cfg: Config):
     # One process per env: the simulation is the bottleneck
     env = make_vec_env(QuadEnv, n_envs=cfg.n_envs, seed=cfg.train_seed, env_kwargs=dict(cfg=cfg.env, training=True),
                        vec_env_cls=SubprocVecEnv)

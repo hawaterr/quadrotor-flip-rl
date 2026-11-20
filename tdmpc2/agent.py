@@ -6,18 +6,19 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch import Tensor
 
 from configs import Config
 
 
 # --- math helpers ----------------------------------------------------------------------------------
 
-def symlog(x):
+def symlog(x: Tensor) -> Tensor:
     """Symmetric log: sign(x) * log(1 + |x|). Compresses large magnitudes, keeps the sign."""
     return torch.sign(x) * torch.log1p(x.abs())
 
 
-def symexp(x):
+def symexp(x: Tensor) -> Tensor:
     """Inverse of symlog."""
     return torch.sign(x) * (torch.exp(x.abs()) - 1)
 
@@ -25,12 +26,12 @@ def symexp(x):
 class TwoHot:
     """Scalars <-> two-hot vectors over num_bins bins in symlog space."""
 
-    def __init__(self, cfg):
+    def __init__(self, cfg: Config):
         self.vmin, self.vmax, self.n = cfg.vmin, cfg.vmax, cfg.num_bins
         self.delta = (cfg.vmax - cfg.vmin) / (cfg.num_bins - 1)
         self.centers = torch.linspace(cfg.vmin, cfg.vmax, cfg.num_bins)
 
-    def encode(self, x):
+    def encode(self, x: Tensor) -> Tensor:
         """(..., 1) scalars -> (..., num_bins) soft labels."""
         x = symlog(x).clamp(self.vmin, self.vmax).squeeze(-1)
         pos = (x - self.vmin) / self.delta
@@ -42,11 +43,11 @@ class TwoHot:
         target.scatter_add_(-1, hi.unsqueeze(-1), frac)
         return target
 
-    def decode(self, logits):
+    def decode(self, logits: Tensor) -> Tensor:
         """(..., num_bins) logits -> (..., 1) scalars."""
         return symexp((F.softmax(logits, -1) * self.centers).sum(-1, keepdim=True))
 
-    def loss(self, logits, x):
+    def loss(self, logits: Tensor, x: Tensor) -> Tensor:
         """Cross-entropy between logits and the two-hot encoding of x, shape (..., 1)."""
         return -(self.encode(x) * F.log_softmax(logits, -1)).sum(-1, keepdim=True)
 
@@ -54,16 +55,17 @@ class TwoHot:
 class SimNorm(nn.Module):
     """Softmax over groups of `dim` features."""
 
-    def __init__(self, dim):
+    def __init__(self, dim: int):
         super().__init__()
         self.dim = dim
 
-    def forward(self, x):
+    def forward(self, x: Tensor) -> Tensor:
         shape = x.shape
         return F.softmax(x.view(*shape[:-1], -1, self.dim), -1).view(shape)
 
 
-def mlp(in_dim, hidden, out_dim, out_act=None, dropout=0.0):
+def mlp(in_dim: int, hidden: list[int], out_dim: int, out_act: nn.Module | None = None,
+        dropout=0.0) -> nn.Sequential:
     """Linear -> LayerNorm -> SiLU blocks; out_act adds LayerNorm + out_act to the last layer."""
     layers, d = [], in_dim
     for i, h in enumerate(hidden):
@@ -81,7 +83,7 @@ def mlp(in_dim, hidden, out_dim, out_act=None, dropout=0.0):
 class EnsembleMLP(nn.Module):
     """n copies of mlp() in one batched matmul per layer; idx computes only some copies."""
 
-    def __init__(self, n, in_dim, hidden, out_dim, dropout=0.0):
+    def __init__(self, n: int, in_dim: int, hidden: list[int], out_dim: int, dropout=0.0):
         super().__init__()
         dims = [in_dim, *hidden, out_dim]
         self.weights, self.biases = nn.ParameterList(), nn.ParameterList()
@@ -93,7 +95,7 @@ class EnsembleMLP(nn.Module):
         self.norm_b = nn.ParameterList([nn.Parameter(torch.zeros(n, 1, h)) for h in hidden])
         self.dropout = dropout
 
-    def forward(self, x, idx=None):
+    def forward(self, x: Tensor, idx: Tensor | None = None) -> Tensor:
         pick = (lambda p: p) if idx is None else (lambda p: p[idx])
         lead = x.shape[:-1]
         x = x.reshape(1, -1, x.shape[-1]).expand(pick(self.weights[0]).shape[0], -1, -1)  # same input to every copy
@@ -109,14 +111,14 @@ class EnsembleMLP(nn.Module):
 class RunningScale:
     """Running estimate of the 5-95 percentile range of Q, used to normalise the policy loss."""
 
-    def __init__(self, tau):
+    def __init__(self, tau: float):
         self.tau, self.value = tau, torch.tensor(1.0)
 
-    def update(self, x):
+    def update(self, x: Tensor):
         lo, hi = torch.quantile(x.detach().flatten(), torch.tensor([0.05, 0.95]))
         self.value.lerp_(hi - lo, self.tau)
 
-    def __call__(self, x):
+    def __call__(self, x: Tensor) -> Tensor:
         return x / self.value.clamp(min=1.0)
 
 
@@ -125,7 +127,7 @@ class RunningScale:
 class WorldModel(nn.Module):
     """All the networks: encoder, latent dynamics, reward, termination, policy prior and the Q ensemble."""
 
-    def __init__(self, obs_dim, act_dim, cfg):
+    def __init__(self, obs_dim: int, act_dim: int, cfg: Config):
         super().__init__()
         self.cfg = cfg
         z, a, h = cfg.latent_dim, act_dim, [cfg.mlp_dim] * 2
@@ -142,10 +144,10 @@ class WorldModel(nn.Module):
         self.target_qs = copy.deepcopy(self.qs)  # Q̄ in the paper
         self.target_qs.requires_grad_(False)
 
-    def next(self, z, a):
+    def next(self, z: Tensor, a: Tensor) -> Tensor:
         return self.dynamics(torch.cat([z, a], -1))
 
-    def policy(self, z):
+    def policy(self, z: Tensor) -> tuple[Tensor, Tensor, Tensor]:
         """Sample a squashed Gaussian action. Returns (mean, action, log_prob)."""
         mean, log_std = self.pi(z).chunk(2, -1)
         lo, hi = self.cfg.log_std_min, self.cfg.log_std_max
@@ -157,7 +159,7 @@ class WorldModel(nn.Module):
         log_prob = log_prob - torch.log(F.relu(1 - action.pow(2)) + 1e-6).sum(-1, keepdim=True)
         return mean, action, log_prob
 
-    def q(self, z, a, two_hot, mode="min", target=False):
+    def q(self, z: Tensor, a: Tensor, two_hot: TwoHot, mode="min", target=False) -> Tensor:
         """mode="all": logits of every head; "min"/"avg": min/mean value of two random heads."""
         qs, za = (self.target_qs if target else self.qs), torch.cat([z, a], -1)
         if mode == "all":
@@ -172,7 +174,7 @@ class WorldModel(nn.Module):
 class TDMPC2:
     """The agent: owns the world model, the two optimizers and the MPPI warm-start state."""
 
-    def __init__(self, obs_dim, act_dim, cfg):
+    def __init__(self, obs_dim: int, act_dim: int, cfg: Config):
         """cfg: the `agent` section of configs/tdmpc2.yaml."""
         self.cfg = cfg
         self.obs_dim, self.act_dim = obs_dim, act_dim
@@ -188,14 +190,14 @@ class TDMPC2:
         self.pi_optim = torch.optim.Adam(m.pi.parameters(), lr=c.lr, eps=1e-5, fused=True)
         self.prev_mean = torch.zeros(c.horizon, act_dim)  # MPPI warm start
 
-    def n_params(self):
+    def n_params(self) -> int:
         """Number of trained parameters (the target Q copies excluded)."""
         return sum(p.numel() for name, p in self.model.named_parameters() if not name.startswith("target_"))
 
     # --- acting ---
 
     @torch.no_grad()
-    def act(self, obs, t0=False, eval_mode=False, plan=True):
+    def act(self, obs: np.ndarray, t0=False, eval_mode=False, plan=True) -> np.ndarray:
         """t0: first step of an episode (resets the MPPI warm start). plan=False uses the policy prior only."""
         self.model.eval()
         z = self.model.encoder(torch.as_tensor(obs, dtype=torch.float32).unsqueeze(0))
@@ -206,7 +208,7 @@ class TDMPC2:
             a = (mean if eval_mode else a)[0]
         return a.clamp(-1, 1).numpy()
 
-    def _estimate_value(self, z, actions):
+    def _estimate_value(self, z: Tensor, actions: Tensor) -> Tensor:
         """Discounted return of action sequences (H, N, A) from z (N, Z), plus a Q bootstrap (Eq. 6)."""
         G, discount, done = 0, 1, torch.zeros(z.shape[0], 1)
         for a in actions:
@@ -218,7 +220,7 @@ class TDMPC2:
         _, a, _ = self.model.policy(z)
         return G + discount * (1 - done) * self.model.q(z, a, self.two_hot, "avg")
 
-    def _plan(self, z, t0, eval_mode):
+    def _plan(self, z: Tensor, t0: bool, eval_mode: bool) -> Tensor:
         """MPPI in latent space (Section 3.2 of the paper); returns the action to execute."""
         c, A = self.cfg, self.act_dim
         H, N, P = c.horizon, c.num_samples, c.num_pi_trajs
@@ -251,7 +253,7 @@ class TDMPC2:
 
     # --- learning ---
 
-    def update(self, obs, action, reward, terminated):
+    def update(self, obs: Tensor, action: Tensor, reward: Tensor, terminated: Tensor) -> dict[str, float]:
         """One update of the world model, policy prior and target Qs; returns the losses."""
         c, m = self.cfg, self.model
         m.train()
@@ -268,7 +270,8 @@ class TDMPC2:
                 tp.lerp_(p, c.tau)  # Q̄: slow-moving copies of Q, for the TD target
         return {**losses, "pi": pi_loss, "grad_norm": grad_norm.item(), "q_scale": float(self.scale.value)}
 
-    def _world_model_loss(self, obs, action, reward, terminated):
+    def _world_model_loss(self, obs: Tensor, action: Tensor, reward: Tensor,
+                          terminated: Tensor) -> tuple[Tensor, Tensor, dict[str, float]]:
         """Losses over the horizon (Eq. 5) + termination; returns (total, latents (H+1, B, Z), parts)."""
         c, m = self.cfg, self.model
         with torch.no_grad():
@@ -300,7 +303,7 @@ class TDMPC2:
         return loss, zs, {"consistency": consistency.item(), "reward": reward_loss.item(),
                           "value": value_loss.item(), "termination": term_loss.item()}
 
-    def _update_pi(self, zs):
+    def _update_pi(self, zs: Tensor) -> float:
         """Policy prior step (Eq. 4 in the paper): maximise the scaled Q plus a small entropy bonus."""
         c, m = self.cfg, self.model
         # Gradients into the action only, not Q's weights
@@ -322,7 +325,7 @@ class TDMPC2:
 
     # --- checkpoints ---
 
-    def save(self, path, **meta):
+    def save(self, path: str, **meta):
         """Written to a temporary file first, so a load started mid-save never reads a half-written file."""
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         torch.save({"model": self.model.state_dict(), "cfg": self.cfg.to_dict(), "obs_dim": self.obs_dim,
@@ -330,7 +333,7 @@ class TDMPC2:
         os.replace(f"{path}.tmp", path)
 
     @classmethod
-    def load(cls, path):
+    def load(cls, path: str) -> tuple["TDMPC2", dict]:
         """Returns (agent, checkpoint dict); the dict also holds whatever meta was passed to save()."""
         ckpt = torch.load(path, weights_only=False)
         agent = cls(ckpt["obs_dim"], ckpt["act_dim"], Config(ckpt["cfg"]))

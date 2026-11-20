@@ -4,6 +4,8 @@ import os
 import mujoco
 import numpy as np
 
+from configs import Config
+
 G = 9.81
 N_MOTORS = 4
 SAT_NONE, SAT_YAW, SAT_COLLECTIVE, SAT_ROLL_PITCH = 0, 1, 2, 3  # highest priority not delivered
@@ -11,7 +13,7 @@ MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "quadrotor
 
 
 class Quadrotor:
-    def __init__(self, cfg):
+    def __init__(self, cfg: Config):
         """cfg: the `dynamics` section of configs/env.yaml."""
         self.model = mujoco.MjModel.from_xml_path(MODEL_PATH)
         self.body = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "quad")
@@ -60,7 +62,7 @@ class Quadrotor:
         self.model.actuator_dynprm[:, 0] = self.thrust_tau * motor_tau
         self.drag = self.drag_nominal * np.asarray(drag)
 
-    def _motor_thrust(self, motors):
+    def _motor_thrust(self, motors: np.ndarray) -> np.ndarray:
         """Nominal motor thrust commands [N] -> true thrust [N]."""
         c = motors / self.max_motor_thrust
         return motors * self.hover_thrust * (1.0 + self.thrust_curve * (c - self.hover_cmd))
@@ -107,14 +109,14 @@ class Quadrotor:
         self.data.qvel[3:6] = value
 
     @property
-    def R(self):
+    def R(self) -> np.ndarray:
         """Rotation matrix (body -> world), from qpos (data.xmat lags one step)."""
         out = np.empty(9)
         mujoco.mju_quat2Mat(out, self.data.qpos[3:7])
         return out.reshape(3, 3)
 
     @property
-    def imu(self):
+    def imu(self) -> tuple[np.ndarray, np.ndarray]:
         """Ideal IMU readings in body frame: gyro [rad/s], specific force [m/s^2]; they lag one physics step."""
         return self.data.sensordata[:3].copy(), self.data.sensordata[3:6].copy()
 
@@ -123,7 +125,7 @@ class Quadrotor:
         mujoco.mj_forward(self.model, self.data)
 
     @property
-    def thrust_acc(self):
+    def thrust_acc(self) -> float:
         """Actual collective thrust / mass, after the motor lag [m/s^2]."""
         return self.data.act.sum() / self.m
 
@@ -131,7 +133,7 @@ class Quadrotor:
     def thrust_acc(self, value):
         self.data.act[:] = self.m * value / N_MOTORS
 
-    def _mix(self, thrust, torque):
+    def _mix(self, thrust: float, torque: np.ndarray) -> np.ndarray:
         """Motor thrusts [N] for a collective thrust [N] and body torque [N m]; priority roll/pitch, collective, yaw."""
         limit = self.max_motor_thrust
         self.saturation = SAT_NONE
@@ -159,7 +161,7 @@ class Quadrotor:
                 self.saturation = self.saturation or SAT_YAW
         return np.clip(motors + yaw, 0.0, limit)  # rounding errors only
 
-    def step(self, thrust_acc_cmd, rate_cmd):
+    def step(self, thrust_acc_cmd: float, rate_cmd: np.ndarray):
         """One physics step. thrust_acc_cmd: collective thrust / mass [m/s^2]. rate_cmd: body rates [rad/s]."""
         thrust_acc_cmd = np.clip(thrust_acc_cmd, 0.0, self.max_thrust_acc)
         rate_cmd = np.clip(rate_cmd, -self.max_rate, self.max_rate)

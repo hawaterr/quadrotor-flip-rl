@@ -1,14 +1,18 @@
 """Policy evaluation on fixed seeds, and the CSV log behind the learning curves."""
 import csv
 import os
+from collections.abc import Callable
 
 import numpy as np
 import torch
 
+from envs.quad_env import QuadEnv
+
+Policy = Callable[[np.ndarray, int], np.ndarray]  # (obs, step in episode) -> action in [-1, 1]
 SETTLE_WINDOW = 0.5  # s at the end of an episode for the settle metric
 
 
-def evaluate(env, act, seeds):
+def evaluate(env: QuadEnv, act: Policy, seeds: list[int]) -> dict[str, float]:
     """Mean metrics over one episode per seed, acting with act(obs, t) -> action."""
     tail = max(1, round(SETTLE_WINDOW / env.policy_dt))
     rows = []
@@ -35,12 +39,12 @@ def evaluate(env, act, seeds):
 class EvalLog:
     """Appends one row per evaluation to results/<name>.csv (a fresh file per training run)."""
 
-    def __init__(self, name):
+    def __init__(self, name: str):
         os.makedirs("results", exist_ok=True)
         self.path = f"results/{name}.csv"
         self.file = None
 
-    def write(self, step, wall_time, metrics):
+    def write(self, step: int, wall_time: float, metrics: dict[str, float]):
         row = {"step": step, "wall_time": round(wall_time, 1), **{k: round(v, 4) for k, v in metrics.items()}}
         if self.file is None:
             self.file = open(self.path, "w", newline="")

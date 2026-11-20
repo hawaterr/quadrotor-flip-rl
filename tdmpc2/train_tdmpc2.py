@@ -5,7 +5,7 @@ import numpy as np
 import torch
 from torch.utils.tensorboard import SummaryWriter
 
-from configs import load_config
+from configs import Config, load_config
 from envs.evaluation import EvalLog, evaluate as evaluate_policy
 from envs.quad_env import QuadEnv
 from tdmpc2.agent import TDMPC2
@@ -14,7 +14,7 @@ from tdmpc2.agent import TDMPC2
 class Buffer:
     """Flat transition storage; samples length-H sub-trajectories that stay inside one episode."""
 
-    def __init__(self, obs_dim, act_dim, capacity, horizon):
+    def __init__(self, obs_dim: int, act_dim: int, capacity: int, horizon: int):
         self.H = horizon
         self.obs = np.zeros((capacity, obs_dim), np.float32)
         self.next_obs = np.zeros((capacity, obs_dim), np.float32)
@@ -23,7 +23,7 @@ class Buffer:
         self.terminated = np.zeros((capacity, 1), np.float32)
         self.n, self.ep_start, self.starts = 0, 0, np.zeros(0, np.int64)
 
-    def add(self, obs, action, reward, terminated, next_obs):
+    def add(self, obs: np.ndarray, action: np.ndarray, reward: float, terminated: bool, next_obs: np.ndarray):
         i = self.n
         self.obs[i], self.action[i], self.reward[i] = obs, action, reward
         self.terminated[i], self.next_obs[i] = terminated, next_obs
@@ -34,14 +34,14 @@ class Buffer:
         self.starts = np.concatenate([self.starts, np.arange(self.ep_start, self.n - self.H + 1)])
         self.ep_start = self.n
 
-    def sample(self, batch_size):
+    def sample(self, batch_size: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         s = np.random.choice(self.starts, batch_size)[None] + np.arange(self.H)[:, None]  # (H, B)
         obs = np.concatenate([self.obs[s[:1]], self.next_obs[s]])  # (H+1, B, O)
         t = torch.as_tensor
         return t(obs), t(self.action[s]), t(self.reward[s]), t(self.terminated[s])
 
 
-def _build(cfg):
+def _build(cfg: Config) -> tuple[QuadEnv, TDMPC2, Buffer, int]:
     """Training env, agent and replay buffer, seeded with cfg.train_seed; also the number of seed steps."""
     env = QuadEnv(cfg=cfg.env, training=True)
     obs_dim, act_dim = env.observation_space.shape[0], env.action_space.shape[0]
@@ -57,7 +57,8 @@ def _build(cfg):
     return env, agent, buf, seed_steps
 
 
-def _log_episode(writer, step, ep_ret, ep_len, task, env_info, crashed):
+def _log_episode(writer: SummaryWriter, step: int, ep_ret: float, ep_len: int, task: str, env_info: dict,
+                 crashed: bool):
     """TensorBoard scalars of a finished training episode."""
     writer.add_scalar("episode/return", ep_ret, step)
     writer.add_scalar("episode/length", ep_len, step)
@@ -66,7 +67,8 @@ def _log_episode(writer, step, ep_ret, ep_len, task, env_info, crashed):
         writer.add_scalar("episode/crashed", float(crashed), step)
 
 
-def _learn(agent, buf, cfg, step, seed_steps, writer, info):
+def _learn(agent: TDMPC2, buf: Buffer, cfg: Config, step: int, seed_steps: int, writer: SummaryWriter,
+           info: dict[str, float]) -> dict[str, float]:
     """This env step's gradient updates, logged every log_every_steps; returns the latest losses."""
     if step >= seed_steps and (step - seed_steps) % cfg.update_every == 0:
         # Pretrain on the seed data once, then update every update_every steps
@@ -78,14 +80,14 @@ def _learn(agent, buf, cfg, step, seed_steps, writer, info):
     return info
 
 
-def _evaluate(agent, eval_env, eval_log, seeds, step, wall_time):
+def _evaluate(agent: TDMPC2, eval_env: QuadEnv, eval_log: EvalLog, seeds: list[int], step: int, wall_time: float):
     """Evaluate with MPPI (the actual algorithm) and with the learned policy alone (no planning); log both."""
     mppi = evaluate_policy(eval_env, lambda o, t: agent.act(o, t0=t == 0, eval_mode=True), seeds)
     policy = evaluate_policy(eval_env, lambda o, t: agent.act(o, t0=t == 0, eval_mode=True, plan=False), seeds)
     eval_log.write(step, wall_time, {**mppi, **{f"policy_{k}": v for k, v in policy.items()}})
 
 
-def train(cfg):
+def train(cfg: Config):
     task = cfg.task
     name = cfg.name or f"tdmpc2_{task}"
     env, agent, buf, seed_steps = _build(cfg)

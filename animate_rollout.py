@@ -1,16 +1,21 @@
 """Animate one episode of a policy on QuadEnv: MuJoCo view plus command and attitude plots."""
 import os
 import time
+from collections.abc import Callable
 
 import matplotlib.pyplot as plt
 import mujoco
 import numpy as np
 import torch
 from matplotlib.animation import FuncAnimation
+from matplotlib.axes import Axes
+from matplotlib.figure import Figure
+from matplotlib.gridspec import GridSpec
+from matplotlib.lines import Line2D
 from PIL import Image
 
 from configs import TASKS, Config, load_config, load_env
-from envs.evaluation import SETTLE_WINDOW
+from envs.evaluation import SETTLE_WINDOW, Policy
 from envs.quad_env import QuadEnv
 from envs.quadrotor import SAT_COLLECTIVE, SAT_ROLL_PITCH, SAT_YAW, G
 
@@ -23,7 +28,7 @@ BASELINES = ["zero", "hover", "random"] + [f"scripted_{task}" for task in TASKS]
 MODEL_FILES = {"ppo_": ".zip", "tdmpc2_": ".pt"}  # name prefix -> file extension
 
 
-def trained_models():
+def trained_models() -> list[str]:
     """Names of the trained models in models/, e.g. ppo_flip, ppo_flip_v1, tdmpc2_flip_prev."""
     if not os.path.isdir("models"):
         return []
@@ -35,12 +40,12 @@ def trained_models():
     return names
 
 
-def task_of(policy):
+def task_of(policy: str) -> str:
     """The first task named in the policy (ppo_flip_v1 -> flip); open-loop baselines run in the hover env."""
     return next((part for part in policy.split("_") if part in TASKS), "hover")
 
 
-def env_config_for(policy):
+def env_config_for(policy: str) -> Config:
     """Trained models run in the env they were trained in (saved with the model); baselines use env.yaml."""
     if policy.startswith("tdmpc2_"):
         return Config(torch.load(f"models/{policy}.pt", weights_only=False)["env_cfg"])
@@ -56,7 +61,7 @@ NOMINAL_DRAWS = {"hover_thrust": [1.0, 1.0], "thrust_curve": [0.0, 0.0], "inerti
                  "motor_tau": [1.0, 1.0], "drag_xy": [1.0, 1.0], "drag_z": [1.0, 1.0]}
 
 
-def env_config_with_drone(policy, drone_from):
+def env_config_with_drone(policy: str, drone_from: str) -> Config:
     """The policy's env, flying another model's drone (dynamics, latency, sensors, randomisation)."""
     cfg = env_config_for(policy)
     other = env_config_for(drone_from)
@@ -68,7 +73,7 @@ def env_config_with_drone(policy, drone_from):
     return Config({**cfg, **{k: other[k] for k in DRONE_KEYS}, "randomisation": dr})
 
 
-def scripted_hover_policy(env, scripted):
+def scripted_hover_policy(env: QuadEnv, scripted: Config) -> Policy:
     """Cascaded PD hover controller."""
     def pd(obs, t):
         q = env.quad
@@ -81,7 +86,7 @@ def scripted_hover_policy(env, scripted):
     return pd
 
 
-def scripted_flip_policy(env, scripted):
+def scripted_flip_policy(env: QuadEnv, scripted: Config) -> Policy:
     """Climb, roll until one revolution, then recover with the hover PD controller."""
     pd = scripted_hover_policy(env, scripted)
     climb_steps = round(scripted.flip_climb_time / env.policy_dt)
@@ -95,7 +100,7 @@ def scripted_flip_policy(env, scripted):
     return flip
 
 
-def make_policy(name, env, plan=True, scripted=None):
+def make_policy(name: str, env: QuadEnv, plan=True, scripted: Config | None = None) -> Policy:
     """scripted: the `scripted` section of configs/animate_rollout.yaml (gains of the hand-written controllers)."""
     if name == "zero":
         return lambda obs, t: np.array([-1.0, 0, 0, 0])          # thrust off
@@ -117,7 +122,7 @@ def make_policy(name, env, plan=True, scripted=None):
     return scripted_flip_policy(env, scripted)
 
 
-def rollout(env, policy, seed):
+def rollout(env: QuadEnv, policy: Policy, seed: int) -> dict:
     """Log the state at t = 0 and after every step; index i is time i * policy_dt."""
     torch.manual_seed(seed)
     np.random.seed(seed)  # MPPI samples
@@ -165,7 +170,7 @@ def rollout(env, policy, seed):
     return log
 
 
-def print_summary(log, env):
+def print_summary(log: dict, env: QuadEnv):
     """How the episode ended, how still the drone is at the end, and the policy's inference time."""
     flip = f"  flip_done={env.flip_done}" if env.task == "flip" else ""
     print(f"steps={len(log['p']) - 1}  total reward={log['r'][-1]:.2f}  final dist={log['dist'][-1]:.3f}{flip}  "
@@ -189,7 +194,7 @@ def print_summary(log, env):
           f"first call={infer_ms[0]:.1f} ms  (control period {1000 * env.policy_dt:.0f} ms)")
 
 
-def _camera(model, P):
+def _camera(model: mujoco.MjModel, P: np.ndarray) -> mujoco.MjvCamera:
     """Fixed camera that keeps the whole trajectory P in view."""
     camera = mujoco.MjvCamera()
     camera.lookat = (P.min(0) + P.max(0)) / 2
@@ -199,7 +204,8 @@ def _camera(model, P):
     return camera
 
 
-def _add_connector(scene, kind, width, start, end, rgba):
+def _add_connector(scene: mujoco.MjvScene, kind: mujoco.mjtGeom, width: float, start: np.ndarray, end: np.ndarray,
+                   rgba: tuple[float, float, float, float]):
     """Add a line-like geom (the trail, the thrust arrow) to a scene that is about to be rendered."""
     geom = scene.geoms[scene.ngeom]
     mujoco.mjv_initGeom(geom, kind, np.zeros(3), np.zeros(3), np.eye(3).flatten(), np.array(rgba, np.float32))
@@ -207,7 +213,7 @@ def _add_connector(scene, kind, width, start, end, rgba):
     scene.ngeom += 1
 
 
-def render_frames(log, model, height, width):
+def render_frames(log: dict, model: mujoco.MjModel, height: int, width: int) -> list[np.ndarray]:
     """Render each logged state in MuJoCo, with the trail and thrust arrow."""
     P = np.array(log["p"])
     data = mujoco.MjData(model)
@@ -228,7 +234,7 @@ def render_frames(log, model, height, width):
     return frames
 
 
-def _setup_view(height, width, plots):
+def _setup_view(height: int, width: int, plots: bool) -> tuple[Figure, Axes, GridSpec | None]:
     """Figure and axes for the MuJoCo view, plus a grid for the plots (None without plots)."""
     if plots:
         fig = plt.figure(figsize=(9, 11))
@@ -241,7 +247,7 @@ def _setup_view(height, width, plots):
     return fig, ax, gs
 
 
-def _plot_series(log, P):
+def _plot_series(log: dict, P: np.ndarray) -> dict[str, np.ndarray]:
     """The time series shown under the MuJoCo view, as arrays indexed by time step."""
     series = {"thrust_cmd": np.array(log["thrust_cmd"]), "thrust": np.array(log["thrust"]),
               "rate_cmd": np.array(log["rate_cmd"]), "w": np.array(log["w"]), "z": P[:, 2]}
@@ -254,7 +260,8 @@ def _plot_series(log, P):
     return series
 
 
-def _add_panels(fig, gs, series, T, hover_force):
+def _add_panels(fig: Figure, gs: GridSpec, series: dict[str, np.ndarray], T: np.ndarray,
+                hover_force: float) -> list[tuple[Line2D, str, int | None]]:
     """Plots under the MuJoCo view; returns [(line, series, column)] to update each frame."""
     # (grid cell, y label, colour, [(series, column, style, legend label)])
     panels = [(gs[1, 0], "thrust [N]", "b", [("thrust_cmd", None, "--", "cmd"), ("thrust", None, "-", "actual")]),
@@ -287,7 +294,7 @@ def _add_panels(fig, gs, series, T, hover_force):
     return lines
 
 
-def _save_gif(fig, update, frames, path):
+def _save_gif(fig: Figure, update: Callable[[int], object], frames: list[int], path: str):
     """Save a GIF with one octree palette and no dithering (about 20x smaller)."""
     images = []
     for i in frames:
@@ -301,7 +308,8 @@ def _save_gif(fig, update, frames, path):
     print(f"saved {path}")
 
 
-def _play(fig, update, n_states, policy_dt, start_pause, save):
+def _play(fig: Figure, update: Callable[[int], object], n_states: int, policy_dt: float, start_pause: float,
+          save: str | None) -> FuncAnimation:
     """Animate in real time (sim time = wall-clock time), after saving to `save` (a path) if given."""
     if save:
         hold = [0] * round(start_pause / FRAME_DT)  # hold t = 0
@@ -323,7 +331,7 @@ def _play(fig, update, n_states, policy_dt, start_pause, save):
     return anim  # FuncAnimation stops if it is garbage collected
 
 
-def animate(log, model, policy_dt, save=None, start_pause=0.0, plots=True):
+def animate(log: dict, model: mujoco.MjModel, policy_dt: float, save: str | None = None, start_pause=0.0, plots=True):
     """start_pause: s to hold t = 0; plots=False draws the MuJoCo view only."""
     P = np.array(log["p"])
     T = np.arange(len(P)) * policy_dt

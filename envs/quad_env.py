@@ -5,7 +5,7 @@ import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 
-from configs import load_env
+from configs import Config, load_env
 from envs.quadrotor import G, Quadrotor
 from envs.sensors import AttitudeEstimator, ImuModel, axis_angle_quat, quat_multiply
 
@@ -20,7 +20,7 @@ N_PARAM_OBS = 1 + 1 + 3 + 1 + 1 + 1 + 1  # hover thrust, thrust curve, inertia, 
 class QuadEnv(gym.Env):
     metadata = {"render_modes": []}
 
-    def __init__(self, task="flip", cfg=None, training=False):
+    def __init__(self, task="flip", cfg: Config | None = None, training=False):
         """cfg: env config (default configs/env.yaml); training: enables mid-flip starts."""
         self.cfg = cfg if cfg is not None else load_env(task)
         self.task = self.cfg.task
@@ -45,7 +45,7 @@ class QuadEnv(gym.Env):
         n_obs = self.n_actor_obs + STATE_DIM + flip_dim + (N_PARAM_OBS if self.randomisation else 0)
         self.observation_space = spaces.Box(-np.inf, np.inf, shape=(n_obs,), dtype=np.float32)
 
-    def scale_action(self, a):
+    def scale_action(self, a: np.ndarray) -> tuple[float, np.ndarray]:
         """Action in [-1, 1] -> (thrust / mass [m/s^2], body rates [rad/s]); a[0] = 0 is hover."""
         if a[0] >= 0:
             thrust = G + a[0] * (self.quad.max_thrust_acc - G)
@@ -54,7 +54,7 @@ class QuadEnv(gym.Env):
         rates = a[1:] * self.quad.max_rate
         return thrust, rates
 
-    def _obs(self):
+    def _obs(self) -> np.ndarray:
         q, est = self.quad, self.estimator
         actor = [est.gravity_body, [self.t / self.max_steps], *self.history]
         privileged = [q.R.flatten(), q.w / self.w_scale, q.v / self.v_scale,
@@ -67,12 +67,12 @@ class QuadEnv(gym.Env):
             privileged.append(self.param_obs)
         return np.concatenate(actor + privileged).astype(np.float32)
 
-    def _push_frame(self, gyro, accel, action):
+    def _push_frame(self, gyro: np.ndarray, accel: np.ndarray, action: np.ndarray):
         """Prepend the newest IMU reading and action to the history."""
         self.history.insert(0, np.concatenate([gyro / self.w_scale, accel / G, action]))
         del self.history[self.history_len:]
 
-    def _read_imu(self):
+    def _read_imu(self) -> tuple[np.ndarray, np.ndarray]:
         """Noisy IMU reading, also fed to the attitude estimator."""
         gyro, accel = self.imu.read(*self.quad.imu)
         self.estimator.update(gyro, self.quad.dt)
@@ -82,7 +82,7 @@ class QuadEnv(gym.Env):
         if self.task == "flip":
             self.est_flip_done |= self.estimator.roll_progress >= 2 * np.pi * self.cfg.reward.done_frac
 
-    def reset(self, seed=None, options=None):
+    def reset(self, seed: int | None = None, options: dict | None = None) -> tuple[np.ndarray, dict]:
         """options={"exact": True}: no minimum v/w spread (evaluation)."""
         super().reset(seed=seed)
         self._random_start(exact=(options or {}).get("exact", False))
@@ -135,7 +135,7 @@ class QuadEnv(gym.Env):
             [scaled(p["motor_tau"], *dr.motor_tau), scaled(drag_xy, *dr.drag_xy), scaled(drag_z, *dr.drag_z),
              scaled(self.delay, *self.latency_range)]])
 
-    def _random_start(self, exact):
+    def _random_start(self, exact: bool):
         """Random state around the target; exact drops the minimum v/w spread."""
         rng, start = self.np_random, self.cfg.start
         min_std = 0.0 if exact else start.min_std
@@ -159,7 +159,7 @@ class QuadEnv(gym.Env):
         self.quad.v = np.array([0, 0, mid.climb_speed]) + rng.normal(0, mid.climb_std, 3)
         self.roll_progress = phi
 
-    def step(self, action):
+    def step(self, action: np.ndarray) -> tuple[np.ndarray, float, bool, bool, dict]:
         action = np.clip(action, -1, 1)
         thrust, rates = self.scale_action(action)
         for _ in range(self.substeps):
@@ -191,10 +191,10 @@ class QuadEnv(gym.Env):
         return self._obs(), float(reward), terminated, truncated, {
             "dist": dist, "flip_done": self.flip_done, "roll_progress": self.roll_progress, "crashed": crashed}
 
-    def _terminated(self, dist):
+    def _terminated(self, dist: float) -> bool:
         return bool(self.quad.p[2] < self.cfg.min_height or dist > self.cfg.max_dist)
 
-    def _hover_reward(self, action, dist):
+    def _hover_reward(self, action: np.ndarray, dist: float) -> tuple[float, bool]:
         q, r = self.quad, self.cfg.reward
         upright = q.R[2, 2]  # 1 = level, -1 = upside down
         reward = r.alive - r.dist * dist
@@ -204,7 +204,7 @@ class QuadEnv(gym.Env):
         reward -= r.smooth * np.sum((action - self.prev_action) ** 2)
         return reward, self._terminated(dist)
 
-    def _flip_reward(self, action, dist):
+    def _flip_reward(self, action: np.ndarray, dist: float) -> tuple[float, bool]:
         q, r = self.quad, self.cfg.reward
         upright = q.R[2, 2]
         reward = 0.0
