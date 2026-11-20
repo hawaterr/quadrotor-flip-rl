@@ -178,26 +178,3 @@ class Quadrotor:
         R = self.R
         self.data.xfrc_applied[self.body, :3] = R @ (-self.m * self.drag * (R.T @ self.v))  # drag, world frame
         mujoco.mj_step(self.model, self.data)
-
-
-if __name__ == "__main__":
-    # Sanity checks: python -m envs.quadrotor
-    from configs import load_env
-    quad = Quadrotor(load_env("hover").dynamics)
-
-    quad.reset(p=[0, 0, 10])
-    quad.thrust_acc = 0.0
-    for _ in range(int(1.0 / quad.dt)):  # 1 s free fall
-        quad.step(0.0, np.zeros(3))
-    print(f"free fall 1s: z={quad.p[2]:.2f} (no drag: ~{10 - 0.5 * G:.2f} minus a bit of thrust lag; "
-          "vertical drag slows it)")
-
-    quad.reset(p=[0, 0, 2])
-    for _ in range(int(2.0 / quad.dt)):  # 2 s hover
-        quad.step(G, np.zeros(3))
-    print(f"hover 2s: z={quad.p[2]:.3f} (expect 2.000)")
-
-    quad.reset(p=[0, 0, 2])
-    for _ in range(int(2 * np.pi / 10.0 / quad.dt)):  # roll at 10 rad/s for one revolution
-        quad.step(G, np.array([10.0, 0, 0]))
-    print(f"one roll rev: body z-axis world z = {quad.R[2, 2]:.2f} (expect ~1, slightly less from controller lag)")

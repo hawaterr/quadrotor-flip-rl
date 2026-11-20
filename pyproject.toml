@@ -1,4 +1,4 @@
-# Tool config only: ruff check . && mypy
+# Tool config only: ruff check . && mypy && pytest
 
 [tool.ruff]
 line-length = 120
@@ -12,6 +12,9 @@ ignore = [
     "N812",                                  # import torch.nn.functional as F
 ]
 
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["PLR2004"]  # tolerances and expected values are clearer inline
+
 [tool.ruff.lint.flake8-annotations]
 mypy-init-return = true         # no -> None on __init__
 allow-star-arg-any = true       # *args: Any, **kwargs: Any
@@ -22,5 +25,11 @@ convention = "google"
 
 [tool.mypy]
 python_version = "3.10"
-files = ["configs", "envs", "ppo", "tdmpc2", "animate_rollout.py", "plot_curves.py"]
+files = ["configs", "envs", "ppo", "tdmpc2", "tests", "animate_rollout.py", "plot_curves.py"]
 ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-p no:cacheprovider --disable-plugin-autoload"  # ROS on PYTHONPATH registers broken plugins
+filterwarnings = ["ignore:.*Box observation space m:UserWarning"]  # unbounded obs space is intended

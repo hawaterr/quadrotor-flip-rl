@@ -179,7 +179,7 @@ class QuadEnv(gym.Env):
         self.t += 1
 
         q = self.quad
-        dist = np.linalg.norm(q.p - self.target)  # np.float64, not float: keeps the reward float64 (NumPy 2)
+        dist = np.linalg.norm(q.p - self.target)
         if self.task == "hover":
             reward, terminated = self._hover_reward(action, dist)
         else:
