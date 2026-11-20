@@ -1,10 +1,4 @@
-"""Minimal single-task TD-MPC2 (Hansen et al., 2024), CPU friendly.
-
-Kept from the paper: SimNorm latent, latent dynamics + reward + Q-ensemble trained with a multi-step
-consistency loss, discrete (two-hot, symlog) regression for reward and value, a max-entropy policy prior,
-and MPPI planning in latent space. Dropped: everything multi-task (task embeddings, action masks).
-Added: a termination head, since QuadEnv ends episodes on a crash (the original assumes fixed-length episodes).
-"""
+"""Minimal single-task TD-MPC2 (Hansen et al., 2024) with a termination head, CPU friendly."""
 import copy
 import os
 
@@ -29,8 +23,7 @@ def symexp(x):
 
 
 class TwoHot:
-    """Scalars <-> categorical over num_bins evenly spaced bins in symlog space. A two-hot vector spreads the
-    probability over the two neighbouring bins that surround the value."""
+    """Scalars <-> two-hot vectors over num_bins bins in symlog space."""
 
     def __init__(self, cfg):
         self.vmin, self.vmax, self.n = cfg.vmin, cfg.vmax, cfg.num_bins
@@ -59,15 +52,7 @@ class TwoHot:
 
 
 class SimNorm(nn.Module):
-    """Softmax over groups of `dim` features: keeps the latent on a product of simplices.
-    Example:
-    input:   [ 2.0,  0.0, -1.0 |  1.0,  1.0,  1.0 ]
-              group 1      |      group 2
-    output:  [0.84, 0.11, 0.04 | 0.33, 0.33, 0.33 ]
-    It applies the softmax to small groups separately instead of once over the whole vector. With latent_dim 64
-    and simnorm_dim 8, the latent becomes 8 independent categorical-like variables of 8 values each. Each group
-    makes its own choice without affecting the others.
-    """
+    """Softmax over groups of `dim` features."""
 
     def __init__(self, dim):
         super().__init__()
@@ -79,8 +64,7 @@ class SimNorm(nn.Module):
 
 
 def mlp(in_dim, hidden, out_dim, out_act=None, dropout=0.0):
-    """Linear -> LayerNorm -> SiLU blocks. With out_act, the last layer also gets LayerNorm + out_act.
-    (The paper uses Mish; SiLU is near-identical and ~2x faster on CPU.)"""
+    """Linear -> LayerNorm -> SiLU blocks; out_act adds LayerNorm + out_act to the last layer."""
     layers, d = [], in_dim
     for i, h in enumerate(hidden):
         layers += [nn.Linear(d, h)]
@@ -95,10 +79,7 @@ def mlp(in_dim, hidden, out_dim, out_act=None, dropout=0.0):
 
 
 class EnsembleMLP(nn.Module):
-    """n independent copies of mlp(in_dim, hidden, out_dim, dropout=dropout), computed in one batched matrix
-    multiply per layer (torch.baddbmm) instead of a Python loop over n networks. Same maths and initialisation
-    as n separate mlp()s, much less overhead. Output shape: (n, *leading dims of the input, out_dim), or
-    (len(idx), ...) when idx selects some of the copies (only those are computed)."""
+    """n copies of mlp() in one batched matmul per layer; idx computes only some copies."""
 
     def __init__(self, n, in_dim, hidden, out_dim, dropout=0.0):
         super().__init__()
@@ -154,7 +135,7 @@ class WorldModel(nn.Module):
         self.termination = mlp(z, h, 1)  # logit that the episode ended on arriving at z (not in paper)
         self.pi = mlp(z, h, 2 * a)  # p in the paper
         self.qs = EnsembleMLP(cfg.num_q, z + a, h, cfg.num_bins, dropout=cfg.dropout)  # Q ensemble, batched
-        # Zero-init reward and Q outputs: predictions start at 0 instead of random
+        # Zero-init reward and Q outputs
         for weight, bias in [(self.reward[-1].weight, self.reward[-1].bias), (self.qs.weights[-1], self.qs.biases[-1])]:
             nn.init.zeros_(weight)
             nn.init.zeros_(bias)
@@ -203,7 +184,7 @@ class TDMPC2:
             {"params": m.encoder.parameters(), "lr": c.lr * c.enc_lr_scale},
             {"params": [*m.dynamics.parameters(), *m.reward.parameters(),
                         *m.termination.parameters(), *m.qs.parameters()]},
-        ], lr=c.lr, fused=True)  # fused: one kernel for all params, instead of a Python loop on CPU
+        ], lr=c.lr, fused=True)  # fused: one kernel for all params
         self.pi_optim = torch.optim.Adam(m.pi.parameters(), lr=c.lr, eps=1e-5, fused=True)
         self.prev_mean = torch.zeros(c.horizon, act_dim)  # MPPI warm start
 
@@ -226,8 +207,7 @@ class TDMPC2:
         return a.clamp(-1, 1).numpy()
 
     def _estimate_value(self, z, actions):
-        """Discounted return of action sequences (H, N, A) from latent z (N, Z), plus a Q bootstrap
-        (Eq. 6 in the paper)."""
+        """Discounted return of action sequences (H, N, A) from z (N, Z), plus a Q bootstrap (Eq. 6)."""
         G, discount, done = 0, 1, torch.zeros(z.shape[0], 1)
         for a in actions:
             r = self.two_hot.decode(self.model.reward(torch.cat([z, a], -1)))
@@ -261,7 +241,7 @@ class TDMPC2:
             score = (score / score.sum()).view(1, -1, 1)
             mean = (score * elite_actions).sum(1)
             std = ((score * (elite_actions - mean.unsqueeze(1)) ** 2).sum(1)).sqrt().clamp(c.min_std, c.max_std)
-        # Pick one elite trajectory in proportion to its score, and execute its first action
+        # Pick an elite in proportion to its score; execute its first action
         idx = torch.multinomial(score.view(-1), 1).item()
         a = elite_actions[0, idx]
         if not eval_mode:
@@ -272,8 +252,7 @@ class TDMPC2:
     # --- learning ---
 
     def update(self, obs, action, reward, terminated):
-        """One gradient step on the world model, then on the policy prior, then the target Q update.
-        obs (H+1, B, O), action/reward/terminated (H, B, ·). Returns a dict of losses."""
+        """One update of the world model, policy prior and target Qs; returns the losses."""
         c, m = self.cfg, self.model
         m.train()
         loss, zs, losses = self._world_model_loss(obs, action, reward, terminated)
@@ -290,8 +269,7 @@ class TDMPC2:
         return {**losses, "pi": pi_loss, "grad_norm": grad_norm.item(), "q_scale": float(self.scale.value)}
 
     def _world_model_loss(self, obs, action, reward, terminated):
-        """Consistency, reward and value losses over the horizon (Eq. 5 in the paper), plus the termination loss.
-        Returns (total loss, latents (H+1, B, Z) rolled out from obs[0], dict of the loss parts)."""
+        """Losses over the horizon (Eq. 5) + termination; returns (total, latents (H+1, B, Z), parts)."""
         c, m = self.cfg, self.model
         with torch.no_grad():
             next_z = m.encoder(obs[1:])
@@ -325,7 +303,7 @@ class TDMPC2:
     def _update_pi(self, zs):
         """Policy prior step (Eq. 4 in the paper): maximise the scaled Q plus a small entropy bonus."""
         c, m = self.cfg, self.model
-        # Gradients flow into the action only; Q is not stepped here, so don't compute its weight gradients
+        # Gradients into the action only, not Q's weights
         m.qs.requires_grad_(False)
         try:
             _, a, log_prob = m.policy(zs)

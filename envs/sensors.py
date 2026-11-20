@@ -1,14 +1,4 @@
-"""What the real drone measures, and what it can compute from it.
-
-The policy runs on an ESP32 next to a Betaflight flight controller, which sends it the IMU readings (MSP_RAW_IMU)
-and its attitude estimate (MSP_ATTITUDE). So the policy gets no position and no velocity: only gyro, accelerometer
-and an attitude that comes from integrating the gyro.
-
-ImuModel:           ideal MuJoCo readings + a bias drawn per episode + white noise (configs/env.yaml, `sensors`).
-AttitudeEstimator:  integrates the noisy gyro, like Betaflight does during a flip (it ignores the accelerometer when
-                    |acc| is far from 1 g, which is the whole flip). Also integrates the roll rate, which counts the
-                    flip's progress. Plain numpy, so it ports directly to the ESP32.
-"""
+"""IMU noise model and gyro-integrating attitude estimator: what the real drone measures."""
 import numpy as np
 
 
@@ -52,8 +42,7 @@ def axis_angle_quat(rotvec):
 
 class AttitudeEstimator:
     def reset(self, q, roll_progress=0.0):
-        """Start from attitude q (body -> world, [w, x, y, z]); on the real drone, Betaflight's estimate when the
-        flip is triggered."""
+        """Start from attitude q (body -> world, [w, x, y, z])."""
         self.q = np.array(q, float)
         self.roll_progress = roll_progress
 
@@ -65,8 +54,6 @@ class AttitudeEstimator:
 
     @property
     def gravity_body(self):
-        """World up (z) in body frame, R^T e_z = the last row of R: (0, 0, 1) when level, (0, 0, -1) upside down.
-        Yaw-free. On the real drone, computed from Betaflight's roll and pitch with sines and cosines, so it has no
-        jump at roll = ±180 deg (Betaflight's axis and sign conventions differ from ours: check them on the bench)."""
+        """World up in body frame (last row of R): (0, 0, 1) when level."""
         w, x, y, z = self.q
         return np.array([2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)])

@@ -1,21 +1,16 @@
-# animate_rollout.py. Override on the command line, e.g.
-#   python animate_rollout.py policy=tdmpc2_flip plan=false save=plots/flip.gif
+# animate_rollout.py; override with key=value on the command line
 
-policy: scripted_flip     # zero, hover, random, scripted_<task>, or any model in models/ (ppo_*, tdmpc2_*)
-seed: 0                   # seed of the episode's starting state
-save: null                # e.g. plots/flip.gif to also save the animation
-plan: true                # tdmpc2_*: false acts with the policy prior alone, without MPPI
-start_pause: 0.7          # s to hold the first frame (t = 0), so the starting position is easy to see
-drone_from: null          # a model whose drone to fly on instead of the policy's own (dynamics, latency, sensors,
-                          #   domain randomisation): compares two policies on the same drone for a given seed, e.g.
-                          #   policy=ppo_flip drone_from=ppo_flip_dr. env.yaml if a baseline (scripted_flip, ...)
-plots: true               # false: MuJoCo view alone, without the plots and status text
+policy: scripted_flip     # zero, hover, random, scripted_<task>, or a model in models/
+seed: 0
+save: null                # e.g. plots/flip.gif
+plan: true                # tdmpc2: false = policy prior only
+start_pause: 0.7          # s on the first frame
+drone_from: null          # fly on another model's drone, e.g. ppo_flip_dr
+plots: true               # false = MuJoCo view only
 
-# Hand-written baseline controllers (scripted_hover / scripted_flip)
-scripted:
-  pd_kp: 4.0              # 1/s^2, position gain of the cascaded PD controller
-  pd_kd: 3.0              # 1/s, velocity gain
-  att_gain: 8.0           # 1/s, body rate per unit of attitude error
-  flip_climb_time: 0.08   # s at full thrust before rolling; motors at full thrust can't start a roll quickly, so a
-                          #   longer climb overshoots the start point by metres
-  flip_thrust: -0.2       # action thrust while rolling (slightly below hover)
+scripted:                 # baseline controllers
+  pd_kp: 4.0              # 1/s^2
+  pd_kd: 3.0              # 1/s
+  att_gain: 8.0           # 1/s
+  flip_climb_time: 0.08   # s at full thrust before rolling
+  flip_thrust: -0.2       # action thrust while rolling

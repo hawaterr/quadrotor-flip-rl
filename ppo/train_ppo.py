@@ -1,11 +1,4 @@
-"""Train PPO on QuadEnv.
-
-Settings: configs/ppo.yaml (+ configs/env.yaml as env.*); override any of them as key=value.
-Watch a trained model with animate_rollout.py; the learning curve is logged to results/ (plot_curves.py).
-Run from the repo root:
-    python -m ppo.train_ppo                          # train flip; saves models/ppo_flip.zip (+ .yaml)
-    python -m ppo.train_ppo task=hover steps=300000  # train hover; saves models/ppo_hover.zip (+ .yaml)
-"""
+"""Train PPO on QuadEnv: python -m ppo.train_ppo [key=value ...]."""
 import os
 import time
 
@@ -31,8 +24,7 @@ def saved_env_config(name):
 
 
 def save(model, cfg):
-    """Save the model and, next to it, its config (so evaluation rebuilds the env it was trained in).
-    Written to temporary files first, so an eval started mid-save never reads a half-written file."""
+    """Save the model and its config, via temp files so readers never see half-written files."""
     path = f"models/{model_name(cfg)}"
     os.makedirs("models", exist_ok=True)
     model.save(f"{path}.tmp.zip")
@@ -42,16 +34,13 @@ def save(model, cfg):
 
 
 class PeriodicSaveAndEval(BaseCallback):
-    """Every cfg.save_every env steps: save, so progress can be checked while training continues.
-    Every cfg.eval_every env steps (and at the start): evaluate, for the learning curve.
-    A callback because Stable-Baselines3 runs the training loop itself; TD-MPC2's loop is ours, so it just
-    does the same with two checks inside the loop."""
+    """Save every save_every and evaluate every eval_every env steps."""
 
     def __init__(self, cfg):
         super().__init__()
         self.cfg, self.next_save, self.next_eval = cfg, cfg.save_every, 0
         self.log, self.start = EvalLog(model_name(cfg)), time.time()
-        self.eval_env = QuadEnv(cfg=cfg.env)  # evaluation starts: from rest, no mid-roll curriculum
+        self.eval_env = QuadEnv(cfg=cfg.env)  # no mid-roll starts
 
     def _on_step(self):
         if self.num_timesteps >= self.next_save:
@@ -67,15 +56,15 @@ class PeriodicSaveAndEval(BaseCallback):
 
 
 def train(cfg):
-    # One process per env: the simulation (not the small network) is the bottleneck, so this is what speeds it up
+    # One process per env: the simulation is the bottleneck
     env = make_vec_env(QuadEnv, n_envs=cfg.n_envs, seed=cfg.train_seed, env_kwargs=dict(cfg=cfg.env, training=True),
                        vec_env_cls=SubprocVecEnv)
-    if cfg.init_model:  # fine-tune: start from a saved model's weights, with this run's env and settings
+    if cfg.init_model:  # fine-tune
         model = PPO.load(cfg.init_model, env=env, n_steps=cfg.n_steps, batch_size=cfg.batch_size, gamma=cfg.gamma,
                          learning_rate=cfg.learning_rate, ent_coef=cfg.ent_coef, verbose=1, tensorboard_log="runs",
                          seed=cfg.train_seed)
     else:
-        # Actor: the deployable part of the observation only; critic: everything (ppo/asymmetric.py)
+        # Actor: deployable observations only; critic: all
         n_actor = QuadEnv(cfg=cfg.env).n_actor_obs
         model = PPO(AsymmetricPolicy, env, n_steps=cfg.n_steps, batch_size=cfg.batch_size, gamma=cfg.gamma,
                     learning_rate=cfg.learning_rate, ent_coef=cfg.ent_coef, verbose=1,

@@ -1,11 +1,4 @@
-"""Plot the benchmark learning curves: total episode reward vs env steps, one line per algorithm, the mean over
-training seeds with a band of +- 1 std.
-
-Reads the evaluation logs the trainers write during training (results/<run>_seed<i>.csv, every eval_every
-steps). Settings: configs/plot_curves.yaml; override any of them as key=value.
-
-    python plot_curves.py                         # -> docs/learning_curves.png (shown in the README)
-"""
+"""Plot learning curves: mean ± std over training seeds, one line per algorithm."""
 import csv
 import os
 
@@ -30,8 +23,7 @@ def read_log(path):
 
 
 def read_seeds(run, column, seeds):
-    """(env steps, seeds x evals array) of `column` over the seeds' logs that exist, cut to the shortest log, so
-    runs still training can be plotted. None if no seed has a log yet."""
+    """(steps, seeds x evals) of `column` over the existing logs, cut to the shortest; None if none."""
     logs = [read_log(path) for path in (f"results/{run}_seed{s}.csv" for s in seeds) if os.path.exists(path)]
     logs = [log for log in logs if log and column in log]
     if not logs:

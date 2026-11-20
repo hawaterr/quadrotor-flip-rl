@@ -1,24 +1,4 @@
-"""Run one episode of any policy on QuadEnv and animate it: MuJoCo view plus command and attitude plots.
-
-The policy name also picks the task: <name>_flip runs the flip env, everything else the hover env.
-Settings: configs/animate_rollout.yaml; override any of them as key=value.
-
-    python animate_rollout.py                           # hand-coded flip (tests env + physics, no RL)
-    python animate_rollout.py policy=scripted_hover     # hand-coded hover controller
-    python animate_rollout.py policy=zero               # thrust off: should fall
-    python animate_rollout.py policy=hover              # constant hover thrust, no feedback: drifts
-    python animate_rollout.py policy=random
-    python animate_rollout.py policy=ppo_flip           # models/ppo_flip.zip, from ppo/train_ppo.py
-    python animate_rollout.py policy=tdmpc2_flip        # models/tdmpc2_flip.pt, acting with MPPI
-    python animate_rollout.py policy=tdmpc2_flip plan=false    # same agent, policy prior only (no MPPI)
-    python animate_rollout.py policy=ppo_flip_v1        # any model file in models/ named ppo_* or tdmpc2_*
-    python animate_rollout.py save=plots/flip.gif       # also save the animation
-    python animate_rollout.py plots=false               # MuJoCo view alone (no plots or text), as in the README
-    python animate_rollout.py policy=ppo_flip seed=7 drone_from=ppo_flip_dr    # the same drone as
-    python animate_rollout.py policy=ppo_flip_dr seed=7                        #   ppo_flip_dr gets at seed 7
-
-Without a display, set MUJOCO_GL=egl.
-"""
+"""Animate one episode of a policy on QuadEnv: MuJoCo view plus command and attitude plots."""
 import os
 import time
 
@@ -35,12 +15,12 @@ from envs.quad_env import QuadEnv
 from envs.quadrotor import G
 
 ARROW_PER_HOVER = 0.12  # thrust arrow length [m] at hover thrust (m*g)
-VIEW_SIZE = {True: (400, 800), False: (500, 500)}  # (height, width) in pixels, with / without the plots
-CAMERA_AZIMUTH = 205.0    # deg; 180 looks along -x, the roll axis, so the flip is seen face-on, from the front
+VIEW_SIZE = {True: (400, 800), False: (500, 500)}  # (height, width) px, with / without plots
+CAMERA_AZIMUTH = 205.0    # deg; 180 looks along the roll axis
 CAMERA_ELEVATION = -12.0  # deg, looking slightly down
-FRAME_DT = 0.02  # s per animation frame (50 fps); frames are picked so playback is about real time
+FRAME_DT = 0.02  # s per frame (50 fps)
 BASELINES = ["zero", "hover", "random"] + [f"scripted_{task}" for task in TASKS]
-MODEL_FILES = {"ppo_": ".zip", "tdmpc2_": ".pt"}  # trained models in models/: name prefix -> file extension
+MODEL_FILES = {"ppo_": ".zip", "tdmpc2_": ".pt"}  # name prefix -> file extension
 
 
 def trained_models():
@@ -70,16 +50,14 @@ def env_config_for(policy):
     return load_env(task_of(policy))
 
 
-# The settings that make up the drone (vs what the policy observes and is rewarded for)
+# Config keys that define the drone
 DRONE_KEYS = ("dynamics", "latency", "sensors", "randomisation")
 NOMINAL_DRAWS = {"hover_thrust": [1.0, 1.0], "thrust_curve": [0.0, 0.0], "inertia": [1.0, 1.0],
                  "motor_tau": [1.0, 1.0], "drag_xy": [1.0, 1.0], "drag_z": [1.0, 1.0]}
 
 
 def env_config_with_drone(policy, drone_from):
-    """The policy's own env, flying the drone of another model's env (its dynamics, latency, sensors and domain
-    randomisation), so two policies can be compared on the same drone: for a given seed, the start and the drawn
-    dynamics are the same. The critic's parameter inputs follow the policy, so the observation size still fits it."""
+    """The policy's env, flying another model's drone (dynamics, latency, sensors, randomisation)."""
     cfg = env_config_for(policy)
     other = env_config_for(drone_from)
     if cfg.task != other.task:
@@ -88,14 +66,13 @@ def env_config_with_drone(policy, drone_from):
     dr = other.get("randomisation")
     if dr is not None:
         dr = {**dr, "critic_params": own_critic}
-    elif own_critic:  # nominal drone, but the policy expects the parameter inputs: draw them at nominal
+    elif own_critic:  # nominal drone, but the policy expects param inputs
         dr = {**NOMINAL_DRAWS, "critic_params": True}
     return Config({**cfg, **{k: other.get(k) for k in DRONE_KEYS}, "randomisation": dr})
 
 
 def scripted_hover_policy(env, scripted):
-    """Cascaded PD controller. Desired acceleration from position/velocity error sets the desired thrust
-    direction; body rates rotate body z towards it."""
+    """Cascaded PD hover controller."""
     def pd(obs, t):
         q = env.quad
         a_des = -scripted.pd_kp * (q.p - env.target) - scripted.pd_kd * q.v + np.array([0, 0, G])
@@ -131,11 +108,11 @@ def make_policy(name, env, plan=True, scripted=None):
         return lambda obs, t: env.action_space.sample()
     if name.startswith("ppo_"):
         from stable_baselines3 import PPO
-        model = PPO.load(f"models/{name}")  # models/ppo_<task>.zip, as saved by ppo/train_ppo.py
+        model = PPO.load(f"models/{name}")
         return lambda obs, t: model.predict(obs, deterministic=True)[0]
     if name.startswith("tdmpc2_"):
         from tdmpc2.agent import TDMPC2
-        agent, _ = TDMPC2.load(f"models/{name}.pt")  # models/tdmpc2_<task>.pt, as saved by tdmpc2/train_tdmpc2.py
+        agent, _ = TDMPC2.load(f"models/{name}.pt")
         return lambda obs, t: agent.act(obs, t0=t == 0, eval_mode=True, plan=plan)
     if name == "scripted_hover":
         return scripted_hover_policy(env, scripted)
@@ -143,16 +120,15 @@ def make_policy(name, env, plan=True, scripted=None):
 
 
 def rollout(env, policy, seed):
-    """Log the state at t = 0 (after reset) and after every step. Commands are logged per step and held over
-    the step that follows, so index i of every series is time i * policy_dt."""
+    """Log the state at t = 0 and after every step; index i is time i * policy_dt."""
     torch.manual_seed(seed)
-    np.random.seed(seed)  # MPPI samples, so an episode is only repeatable if these are seeded too
+    np.random.seed(seed)  # MPPI samples
     obs, _ = env.reset(seed=seed, options={"exact": True})
     log = {"p": [], "q": [], "R": [], "r": [], "dist": [], "revs": [], "done": [], "thrust": [],
            "thrust_cmd": [], "rate_cmd": [], "w": [], "speed": [], "mass": env.quad.m, "task": env.task,
-           "action_change": [],  # sum over the 4 commands of |a - previous a|; large = chattering
-           "saturation": [],  # Quadrotor.saturation at the end of each step (0 none, 1 yaw, 2 collective, 3 roll/pitch)
-           "infer_ms": []}  # wall-clock time of each policy call (one action from one observation)
+           "action_change": [],  # sum |a - previous a|
+           "saturation": [],  # 0 none, 1 yaw, 2 collective, 3 roll/pitch
+           "infer_ms": []}  # ms per policy call
     total = 0.0
 
     def record():
@@ -164,7 +140,7 @@ def rollout(env, policy, seed):
         log["dist"].append(np.linalg.norm(q.p - env.target))
         log["revs"].append(env.roll_progress / (2 * np.pi))
         log["done"].append(env.flip_done)
-        log["thrust"].append(q.m * q.thrust_acc)  # actual thrust force [N] (after motor lag)
+        log["thrust"].append(q.m * q.thrust_acc)  # N, after motor lag
         log["w"].append(q.w.copy())
         log["speed"].append(np.linalg.norm(q.v))
 
@@ -185,7 +161,7 @@ def rollout(env, policy, seed):
         if term or trunc:
             break
     log["crashed"] = info["crashed"]
-    # Repeat the last command so commands line up with the states (it is held until the end)
+    # Repeat the last command so commands line up with states
     log["thrust_cmd"].append(log["thrust_cmd"][-1])
     log["rate_cmd"].append(log["rate_cmd"][-1])
     return log
@@ -197,7 +173,7 @@ def print_summary(log, env):
     print(f"steps={len(log['p']) - 1}  total reward={log['r'][-1]:.2f}  final dist={log['dist'][-1]:.3f}{flip}  "
           f"final upright={env.quad.R[2, 2]:.2f}  final z={env.quad.p[2]:.2f}  crashed={log['crashed']}  "
           f"mean |a - prev a|={np.mean(log['action_change']):.2f}")
-    if env.params:  # domain randomisation: this episode's true dynamics, as multiples of nominal
+    if env.params:  # domain randomisation
         p = env.params
         print(f"dynamics: hover thrust x{p['hover_thrust']:.2f}  thrust curve k={p['thrust_curve']:.2f}  "
               f"inertia x{np.round(p['inertia'], 2)}  motor lag x{p['motor_tau']:.2f}  drag x{np.round(p['drag'], 2)}  "
@@ -208,7 +184,7 @@ def print_summary(log, env):
     saturation = np.array(log["saturation"])
     print(f"motor limits, share of steps: yaw reduced {100 * np.mean(saturation == 1):.0f}%, collective changed "
           f"{100 * np.mean(saturation == 2):.0f}%, roll/pitch reduced {100 * np.mean(saturation == 3):.0f}%")
-    # The first call is excluded: it includes one-off warm-up (lazy init, memory allocation)
+    # Skip the first call (warm-up)
     infer_ms = log["infer_ms"]
     steady = np.array(infer_ms[1:] or infer_ms)
     print(f"inference time per step: median={np.median(steady):.2f} ms  p99={np.percentile(steady, 99):.2f} ms  "
@@ -234,8 +210,7 @@ def _add_connector(scene, kind, width, start, end, rgba):
 
 
 def render_frames(log, model, height, width):
-    """Replay the logged states in MuJoCo, one image per state, with the trail so far and the thrust arrow (along
-    body z, length proportional to thrust force)."""
+    """Render each logged state in MuJoCo, with the trail and thrust arrow."""
     P = np.array(log["p"])
     data = mujoco.MjData(model)
     camera = _camera(model, P)
@@ -251,13 +226,12 @@ def render_frames(log, model, height, width):
         tip = p + log["R"][i] @ [0, 0, ARROW_PER_HOVER * log["thrust"][i] / hover_force]
         _add_connector(renderer.scene, mujoco.mjtGeom.mjGEOM_ARROW, 0.012, p, tip, (0.1, 0.35, 0.9, 1.0))
         frames.append(renderer.render())
-    renderer.close()  # explicitly: freeing the GL context at interpreter exit raises an error with EGL
+    renderer.close()  # explicitly: EGL errors if freed at exit
     return frames
 
 
 def _setup_view(height, width, plots):
-    """Figure with axes for the MuJoCo view. Returns (fig, axes, grid for the panels below it, or None without
-    plots)."""
+    """Figure and axes for the MuJoCo view, plus a grid for the plots (None without plots)."""
     if plots:
         fig = plt.figure(figsize=(9, 11))
         gs = fig.add_gridspec(5, 2, height_ratios=[4, 1, 1, 1, 1], hspace=0.25, wspace=0.3, top=0.98)
@@ -273,7 +247,7 @@ def _plot_series(log, P):
     """The time series shown under the MuJoCo view, as arrays indexed by time step."""
     series = {"thrust_cmd": np.array(log["thrust_cmd"]), "thrust": np.array(log["thrust"]),
               "rate_cmd": np.array(log["rate_cmd"]), "w": np.array(log["w"]), "z": P[:, 2]}
-    # ZYX Euler angles, unwrapped so a flip reads as a smooth 0 -> 360 deg instead of jumping at +-180
+    # ZYX Euler angles, unwrapped so a flip reads 0 -> 360 deg
     Rs = np.array(log["R"])
     euler = np.stack([np.arctan2(Rs[:, 2, 1], Rs[:, 2, 2]),
                       -np.arcsin(np.clip(Rs[:, 2, 0], -1, 1)),
@@ -283,9 +257,7 @@ def _plot_series(log, P):
 
 
 def _add_panels(fig, gs, series, T, hover_force):
-    """Panels under the MuJoCo view, sharing one time axis T. Left column: commands (dashed) vs actual (solid) for
-    thrust and the body rates. Right column: height and the attitude angles.
-    Returns [(line, series name, column or None)], the lines to draw up to the current time in each frame."""
+    """Plots under the MuJoCo view; returns [(line, series, column)] to update each frame."""
     # (grid cell, y label, colour, [(series, column, style, legend label)])
     panels = [(gs[1, 0], "thrust [N]", "b", [("thrust_cmd", None, "--", "cmd"), ("thrust", None, "-", "actual")]),
               (gs[1, 1], "height z [m]", "k", [("z", None, "-", None)])]
@@ -298,7 +270,7 @@ def _add_panels(fig, gs, series, T, hover_force):
         a = fig.add_subplot(cell)
         ys = []
         for key, c, style, label in curves:
-            # Commands are held over each step, so draw them as steps
+            # Commands are held over each step
             draw = "steps-post" if style == "--" else "default"
             lines.append((a.plot([], [], style, color=col, lw=1 if style == "--" else 1.5, label=label,
                                  drawstyle=draw)[0], key, c))
@@ -318,9 +290,7 @@ def _add_panels(fig, gs, series, T, hover_force):
 
 
 def _save_gif(fig, update, frames, path):
-    """Save with one palette for all frames and no dithering: Pillow's default dithers each frame differently,
-    which makes the GIF about 20x larger. The palette comes from the last frame, where everything is drawn; octree
-    because median cut, the default, spends it on the background and washes out the red arms and blue arrow."""
+    """Save a GIF with one octree palette and no dithering (about 20x smaller)."""
     images = []
     for i in frames:
         update(i)
@@ -336,14 +306,12 @@ def _save_gif(fig, update, frames, path):
 def _play(fig, update, n_states, policy_dt, start_pause, save):
     """Animate in real time (sim time = wall-clock time), after saving to `save` (a path) if given."""
     if save:
-        hold = [0] * round(start_pause / FRAME_DT)  # repeat t = 0 so the starting position is easy to see
+        hold = [0] * round(start_pause / FRAME_DT)  # hold t = 0
         _save_gif(fig, update, hold + list(range(0, n_states, max(1, round(FRAME_DT / policy_dt)))), save)
     end = (n_states - 1) * policy_dt
 
     def wall_clock_frames():
-        """The state at the wall-clock time since this loop started (holding t = 0 for start_pause). The timer only
-        sets a minimum gap between frames, so when drawing a frame takes longer than FRAME_DT, playing every frame
-        would run in slow motion; this skips frames instead. Called again for each repeat, restarting the clock."""
+        """State index at the current wall-clock time; skips frames rather than playing slowly."""
         start = time.perf_counter() + start_pause
         while True:
             t = time.perf_counter() - start
@@ -358,8 +326,7 @@ def _play(fig, update, n_states, policy_dt, start_pause, save):
 
 
 def animate(log, model, policy_dt, save=None, start_pause=0.0, plots=True):
-    """model: the MjModel to render with. start_pause: seconds to hold the first frame (t = 0) before playing.
-    plots: False draws the MuJoCo view alone, with no plots or status text."""
+    """start_pause: s to hold t = 0; plots=False draws the MuJoCo view only."""
     P = np.array(log["p"])
     T = np.arange(len(P)) * policy_dt
     hover_force = log["mass"] * G
@@ -381,7 +348,7 @@ def animate(log, model, policy_dt, save=None, start_pause=0.0, plots=True):
         for line, key, col in lines:
             y = series[key][: i + 1]
             line.set_data(T[: i + 1], y if col is None else y[:, col])
-        # Everything that changes, so blitting redraws only these instead of the whole figure
+        # Changing artists, for blitting
         return image, text, *(line for line, _, _ in lines)
 
     _play(fig, update, len(P), policy_dt, start_pause, save)

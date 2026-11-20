@@ -1,48 +1,42 @@
-# TD-MPC2. Override anything on the command line, e.g.
-#   python -m tdmpc2.train_tdmpc2 steps=60000 agent.num_samples=512
-# The env settings (env.*) come from env.yaml for the chosen task.
+# TD-MPC2; override with key=value on the command line
 
 task: flip                # flip | hover
-train_seed: 0             # seed of the training run (network init, exploration, env), for reproducible runs
-name: null                # file name of the model, eval log and TensorBoard run (default tdmpc2_<task>); use
-                          #   another for experiments, so they don't overwrite the main run
+train_seed: 0
+name: null                # model / log name (default tdmpc2_<task>)
 
-steps: 100000             # env steps to train for
-max_minutes: null         # stop (and save) after this much wall-clock time, e.g. to compare settings at equal time
-save_every: 5000          # env steps between checkpoints (models/tdmpc2_<task>.pt), to check progress mid-run
-eval_every: 5000          # env steps between evaluations, with MPPI and with the policy alone (columns
-                          #   return / policy_return ...), logged to results/tdmpc2_<task>.csv
-eval_seeds: [0, 1, 2, 3, 4]  # one evaluation episode per seed (start from rest)
+steps: 100000             # env steps
+max_minutes: null         # wall-clock limit
+save_every: 5000          # env steps between checkpoints
+eval_every: 5000          # env steps between evaluations
+eval_seeds: [0, 1, 2, 3, 4]
 threads: 4                # torch CPU threads
-plan_after: null          # act with the policy prior (fast) until this step, then with MPPI; null: never plan
-                          #   while collecting data, MPPI is used in evaluation only (~40x cheaper per step)
-update_every: 1           # env steps per gradient update, after the seed steps (paper: 1); 2 halves the update
-                          #   cost, which is the largest part of a training step
-min_seed_steps: 1000      # random-action steps before learning starts: max(min_seed_steps,
+plan_after: null          # step to start acting with MPPI; null = policy prior only in training
+update_every: 1           # env steps per gradient update
+min_seed_steps: 1000      # random steps before learning: max(min_seed_steps,
 seed_episodes: 5          #   seed_episodes * episode length)
-log_every_episodes: 10    # console progress line
-log_every_steps: 1000     # TensorBoard losses
+log_every_episodes: 10
+log_every_steps: 1000
 
 agent:
   # model
-  latent_dim: 64          # size of z; a multiple of simnorm_dim
-  mlp_dim: 128            # hidden layer width of all networks except the encoder (sets most of the cost)
-  enc_dim: 128            # hidden layer width of the encoder
-  num_q: 5                # Q-function ensemble size (paper: 5); the TD target and policy use the min/mean of 2
-  simnorm_dim: 8          # SimNorm group size
-  num_bins: 101           # two-hot bins for reward and value
-  vmin: -10.0             # two-hot support, in symlog space
+  latent_dim: 64          # multiple of simnorm_dim
+  mlp_dim: 128
+  enc_dim: 128
+  num_q: 5                # Q ensemble size
+  simnorm_dim: 8
+  num_bins: 101           # two-hot bins
+  vmin: -10.0             # symlog space
   vmax: 10.0
-  dropout: 0.0            # paper: 0.01 in Q; dropout's RNG costs ~25% of update time on CPU
+  dropout: 0.0
   # training
-  horizon: 3              # steps the latent dynamics are unrolled for, in training and planning
+  horizon: 3
   batch_size: 256
   lr: 3e-4
   enc_lr_scale: 0.3
   grad_clip: 20.0
-  rho: 0.5                # temporal weight decay over the horizon
+  rho: 0.5                # temporal weight decay
   tau: 0.01               # target Q polyak rate
-  discount: 0.99          # per control step
+  discount: 0.99
   consistency_coef: 20.0
   reward_coef: 0.1
   value_coef: 0.1
@@ -50,22 +44,21 @@ agent:
   entropy_coef: 1e-4
   log_std_min: -10.0
   log_std_max: 2.0
-  # planning (MPPI), used in evaluation and animate_rollout.py (and in training if plan_after is set). Halved
-  # from the paper's 512 x 6: ~20 ms per action on a laptop CPU
+  # planning (MPPI)
   iterations: 4
   num_samples: 256
   num_elites: 64
-  num_pi_trajs: 24        # of num_samples, trajectories proposed by the policy prior
+  num_pi_trajs: 24        # samples from the policy prior
   temperature: 0.5
   min_std: 0.05
   max_std: 2.0
 
-# Per-task overrides of the settings above
+# per-task overrides
 hover:
   agent:
-    discount: 0.98        # per 0.02 s step (env.policy_dt): a ~1 s horizon, same as PPO
+    discount: 0.98        # ~1 s horizon at 50 Hz
 
 flip:
-  steps: 200000            # ~3.4 h on a laptop CPU (i7-1065G7) at ~16 steps/s, evaluations included
+  steps: 200000
   agent:
-    discount: 0.98        # per 0.02 s step (env.policy_dt): a ~1 s horizon, same as PPO
+    discount: 0.98

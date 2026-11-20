@@ -1,12 +1,4 @@
-"""Asymmetric actor-critic policy for Stable-Baselines3 PPO.
-
-The observation is [actor part, privileged part] (envs/quad_env.py). The actor reads only the first n_actor entries:
-what the real drone measures, so it can be deployed. The critic reads everything, including the ground-truth state.
-It is only used in training, in sim. A critic that knows the true height and velocity predicts returns much better
-than one that sees the IMU only, so its advantage estimates are less noisy and PPO learns faster and more stably.
-
-Deploy: policy.mlp_extractor.policy_net + policy.action_net, on an input of size n_actor.
-"""
+"""Asymmetric actor-critic PPO policy: the actor sees only the first n_actor observations."""
 from torch import nn
 from stable_baselines3.common.policies import ActorCriticPolicy
 

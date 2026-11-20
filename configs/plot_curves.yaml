@@ -1,12 +1,9 @@
-# plot_curves.py: learning curves of the benchmark runs, mean ± std over training seeds. Override on the
-# command line, e.g.
-#   python plot_curves.py out=plots/test.png seeds=[0,1]
+# plot_curves.py; override with key=value on the command line
 
-seeds: [0, 1, 2]              # one training run per seed: results/<run>_seed<i>.csv (python -m ... train_seed=<i>
-                              #   name=<run>_seed<i>); seeds without a log yet are skipped
-curves:                       # legend label: run name (evaluation logs written during training), and its column
+seeds: [0, 1, 2]              # reads results/<run>_seed<i>.csv
+curves:                       # legend label: run and column
   PPO: {run: ppo_flip, column: return}
   TD-MPC2 (MPPI): {run: tdmpc2_flip, column: return}
-  TD-MPC2 (no plan): {run: tdmpc2_flip, column: policy_return}  # same runs, policy prior alone
-log_x: true                   # log-scale env steps: PPO trains for ~1M steps, TD-MPC2 for ~200k
+  TD-MPC2 (no plan): {run: tdmpc2_flip, column: policy_return}
+log_x: true
 out: docs/learning_curves.png

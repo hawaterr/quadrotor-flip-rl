@@ -1,31 +1,4 @@
-"""Quadrotor on MuJoCo (model: envs/quadrotor.xml), with a CTBR (collective thrust + body rates) interface.
-
-State, stored in MuJoCo's free joint:
-    p   position, world frame [m]            (z up)          qpos[:3]
-    v   velocity, world frame [m/s]                          qvel[:3]
-    q   orientation quaternion [w, x, y, z]   (body -> world) qpos[3:7]
-    w   angular velocity, body frame [rad/s]                 qvel[3:6]
-
-Control: collective thrust and body rates -> rate controller -> mixer -> four motors, each with a first-order lag and
-a thrust limit. When the motors can't deliver everything, the priority is roll and pitch, then collective, then yaw.
-
-Sensors: an ideal gyro and accelerometer at the centre of mass (`imu`); noise and bias are added in envs/sensors.py.
-
-Drag: linear rotor drag, a force against the velocity in body frame, F = -m * drag * v_body (per axis). Strong in x/y
-(rotor drag), weak in z. It is the only force besides thrust that the accelerometer sees, so it is what makes velocity
-(weakly) observable from the IMU: a drag-free quadrotor's accelerometer reads (0, 0, thrust / m) whatever its tilt
-and velocity.
-
-Nominal vs true dynamics (domain randomisation, set_params): the rate controller and the mixer always assume the
-nominal model from the config, like Betaflight's fixed PID tune and the ESP32's fixed hover throttle. The plant itself
-can differ: true inertia, motor lag, drag, and how much thrust a motor command really gives. With the default
-parameters the two are the same.
-
-Simplifications:
-    - Motor thrust follows the motor command through a fixed curve: no battery, propeller or motor speed model, no
-      rotor inertia.
-    - Drag is linear, no quadratic body drag, no wind. No ground contact (episodes end above the floor).
-"""
+"""Quadrotor on MuJoCo with a collective thrust + body rates (CTBR) interface."""
 import os
 
 import mujoco
@@ -40,12 +13,12 @@ class Quadrotor:
         """cfg: the `dynamics` section of configs/env.yaml."""
         self.model = mujoco.MjModel.from_xml_path(MODEL_PATH)
         self.body = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "quad")
-        # override xml with config values: (since each model saves the config, and we can override in command line, and for future domain randomisation)
+        # config values override the xml
         self.model.body_mass[self.body] = cfg.mass
         self.model.body_inertia[self.body] = cfg.inertia
         self.model.opt.timestep = cfg.sim_dt
 
-        # X layout, in the order of quadrotor.xml. Diagonal motors spin the same way, so yaw torque adds no roll or pitch
+        # X layout, in quadrotor.xml order
         offset = cfg.arm_length / np.sqrt(2)
         x, y = offset * np.array([1.0, 1, -1, -1]), offset * np.array([1.0, -1, -1, 1])
         yaw = cfg.yaw_torque_per_thrust * np.array([1.0, -1, 1, -1])
@@ -56,16 +29,15 @@ class Quadrotor:
         mujoco.mj_setConst(self.model, mujoco.MjData(self.model))
         self.data = mujoco.MjData(self.model)
 
-        # (collective, roll, pitch, yaw torque) = allocation @ motor thrusts. Only the torque columns of the inverse
-        # are kept: _mix() handles the collective itself
+        # (collective, roll, pitch, yaw torque) = allocation @ motor thrusts; _mix() handles the collective
         allocation = np.array([np.ones(4), y, -x, yaw])
         self.torque_to_motors = np.linalg.inv(allocation)[:, 1:]
 
         self.m = cfg.mass
-        self.I = np.array(cfg.inertia, float)  # what the rate controller assumes; the plant's is in the MuJoCo model
-        self.max_thrust_acc = cfg.thrust_to_weight * G  # max collective thrust / mass, as the mixer assumes
+        self.I = np.array(cfg.inertia, float)  # assumed by the rate controller
+        self.max_thrust_acc = cfg.thrust_to_weight * G  # max collective thrust / mass
         self.max_motor_thrust = self.m * self.max_thrust_acc / 4  # N
-        self.hover_cmd = 1.0 / cfg.thrust_to_weight  # motor command at nominal hover thrust, in [0, 1]
+        self.hover_cmd = 1.0 / cfg.thrust_to_weight  # motor command at hover
         self.max_rate = cfg.max_rate
         self.drag_nominal = np.array(cfg.drag, float)
         self.thrust_tau = cfg.thrust_tau
@@ -76,29 +48,18 @@ class Quadrotor:
 
     def set_params(self, hover_thrust=1.0, thrust_curve=0.0, inertia=(1.0, 1.0, 1.0), motor_tau=1.0,
                    drag=(1.0, 1.0, 1.0)):
-        """The plant's true dynamics, as multiples of the nominal ones (the defaults: exactly nominal). The rate
-        controller and the mixer keep assuming nominal, as Betaflight would.
-
-        hover_thrust: true thrust at the nominal hover command / weight (battery charge, mass, props).
-        thrust_curve: k in thrust = max * c * (1 + k (c - c_hover)) for a motor command c in [0, 1]. 0 is linear;
-            k > 0 bends it like a propeller (thrust ~ speed^2): same thrust at the hover command, less below, more
-            above.
-        inertia: true / assumed, per body axis. Scales the rate loop gain (kp * assumed / true) and the angular
-            acceleration the motors can give.
-        motor_tau, drag: true / nominal (drag per body axis)."""
+        """Set the plant's true dynamics, as multiples of nominal; the controller keeps assuming nominal."""
         self.hover_thrust, self.thrust_curve = hover_thrust, thrust_curve
         inertia = self.I * np.asarray(inertia)
         if not np.array_equal(inertia, self.model.body_inertia[self.body]):
             self.model.body_inertia[self.body] = inertia
-            # MuJoCo precomputes the mass matrix at compile time (dof_M0): without this the change has no effect.
-            # Scratch MjData, as mj_setConst overwrites the state of the data it gets
+            # Recompute MuJoCo's precomputed mass matrix, on scratch data (mj_setConst overwrites its state)
             mujoco.mj_setConst(self.model, mujoco.MjData(self.model))
         self.model.actuator_dynprm[:, 0] = self.thrust_tau * motor_tau
         self.drag = self.drag_nominal * np.asarray(drag)
 
     def _motor_thrust(self, motors):
-        """Motor thrust commands as the mixer computes them (nominal model, N) -> true thrust [N]. Written so that
-        with the default parameters it returns `motors` exactly."""
+        """Nominal motor thrust commands [N] -> true thrust [N]."""
         c = motors / self.max_motor_thrust
         return motors * self.hover_thrust * (1.0 + self.thrust_curve * (c - self.hover_cmd))
 
@@ -145,17 +106,14 @@ class Quadrotor:
 
     @property
     def R(self):
-        """Rotation matrix (body -> world), from qpos: after mj_step, data.xmat still holds the pose from before
-        the integration."""
+        """Rotation matrix (body -> world), from qpos (data.xmat lags one step)."""
         out = np.empty(9)
         mujoco.mju_quat2Mat(out, self.data.qpos[3:7])
         return out.reshape(3, 3)
 
     @property
     def imu(self):
-        """Ideal IMU readings (body frame): gyro [rad/s], accelerometer specific force [m/s^2]. MuJoCo computes them
-        at the start of mj_step, so after a step they lag the state by one physics step (call forward() after
-        setting the state by hand)."""
+        """Ideal IMU readings in body frame: gyro [rad/s], specific force [m/s^2]; they lag one physics step."""
         return self.data.sensordata[:3].copy(), self.data.sensordata[3:6].copy()
 
     def forward(self):
@@ -172,30 +130,24 @@ class Quadrotor:
         self.data.act[:] = self.m * value / 4
 
     def _mix(self, thrust, torque):
-        """Motor thrust commands [N] for a collective thrust [N] and a body torque [N m], each motor between 0 and
-        max_motor_thrust. When they don't all fit, the priority is roll and pitch, then collective, then yaw, similar
-        to PX4's roll/pitch airmode. Yaw comes last because it is weak: a small yaw error asks for large thrust
-        differences, and would otherwise take the range the other axes need.
-
-        self.saturation: the highest priority that wasn't delivered as asked. 0 = none, 1 = yaw, 2 = collective,
-        3 = roll and pitch."""
+        """Motor thrusts [N] for a collective thrust [N] and body torque [N m]; priority roll/pitch, collective, yaw."""
         limit = self.max_motor_thrust
         self.saturation = 0
 
-        # Roll and pitch: scaled down if too large, which keeps the axis of rotation
+        # Roll and pitch: scaled down to fit, keeping the rotation axis
         roll_pitch = self.torque_to_motors[:, :2] @ torque[:2]
         spread = roll_pitch.max() - roll_pitch.min()
         if spread > limit:
             roll_pitch = roll_pitch * limit / spread
             self.saturation = 3
 
-        # Collective: moved as little as needed to fit roll and pitch
+        # Collective: moved as little as needed
         per_motor = np.clip(thrust / 4, -roll_pitch.min(), limit - roll_pitch.max())
         if per_motor != thrust / 4 and self.saturation == 0:
             self.saturation = 2
         motors = per_motor + roll_pitch
 
-        # Yaw: scaled down to the range that is left on the motors it pushes up or down
+        # Yaw: scaled down to the range left
         yaw = self.torque_to_motors[:, 2] * torque[2]
         if torque[2] != 0:
             room = np.where(yaw > 0, limit - motors, motors)
@@ -203,20 +155,20 @@ class Quadrotor:
             if np.any(needed > room):
                 yaw = yaw * max(0.0, np.min(room / needed))
                 self.saturation = self.saturation or 1
-        return np.clip(motors + yaw, 0.0, limit)  # the clip only removes rounding errors
+        return np.clip(motors + yaw, 0.0, limit)  # rounding errors only
 
     def step(self, thrust_acc_cmd, rate_cmd):
         """One physics step. thrust_acc_cmd: collective thrust / mass [m/s^2]. rate_cmd: body rates [rad/s]."""
         thrust_acc_cmd = np.clip(thrust_acc_cmd, 0.0, self.max_thrust_acc)
         rate_cmd = np.clip(rate_cmd, -self.max_rate, self.max_rate)
 
-        # Rate controller: P on rate error + gyroscopic compensation
+        # Rate controller: P + gyroscopic compensation
         w = self.w
         torque = self.I * (self.kp * (rate_cmd - w)) + np.cross(w, self.I * w)
 
         self.data.ctrl[:] = self._motor_thrust(self._mix(self.m * thrust_acc_cmd, torque))
         R = self.R
-        self.data.xfrc_applied[self.body, :3] = R @ (-self.m * self.drag * (R.T @ self.v))  # world frame, at the CoM
+        self.data.xfrc_applied[self.body, :3] = R @ (-self.m * self.drag * (R.T @ self.v))  # drag, world frame
         mujoco.mj_step(self.model, self.data)
 
 

@@ -1,12 +1,4 @@
-"""Train the minimal TD-MPC2 (tdmpc2/agent.py) on QuadEnv.
-
-Settings: configs/tdmpc2.yaml (+ configs/env.yaml as env.*); override any of them as key=value.
-Watch a trained agent with animate_rollout.py; the learning curve is logged to results/ (plot_curves.py).
-Run from the repo root:
-    python -m tdmpc2.train_tdmpc2                               # train flip; saves models/tdmpc2_flip.pt
-    python -m tdmpc2.train_tdmpc2 task=hover                    # train hover; saves models/tdmpc2_hover.pt
-    python -m tdmpc2.train_tdmpc2 name=test                     # an experiment; saves models/test.pt
-"""
+"""Train the minimal TD-MPC2 on QuadEnv: python -m tdmpc2.train_tdmpc2 [key=value ...]."""
 import time
 
 import numpy as np
@@ -38,7 +30,7 @@ class Buffer:
         self.n += 1
 
     def end_episode(self):
-        # An array, not a list: np.random.choice would convert a list of up to `capacity` starts on every sample
+        # An array: np.random.choice converts lists on every call
         self.starts = np.concatenate([self.starts, np.arange(self.ep_start, self.n - self.H + 1)])
         self.ep_start = self.n
 
@@ -50,11 +42,10 @@ class Buffer:
 
 
 def _build(cfg):
-    """The training env, the agent and its replay buffer, seeded with cfg.train_seed. Also returns the number of
-    random-action seed steps before learning starts."""
+    """Training env, agent and replay buffer, seeded with cfg.train_seed; also the number of seed steps."""
     env = QuadEnv(cfg=cfg.env, training=True)
     obs_dim, act_dim = env.observation_space.shape[0], env.action_space.shape[0]
-    # Seeded before the agent is built, so train_seed also fixes the network initialisation
+    # Seed before building the agent, so train_seed fixes its init
     torch.manual_seed(cfg.train_seed)
     np.random.seed(cfg.train_seed)
     env.action_space.seed(cfg.train_seed)
@@ -76,10 +67,9 @@ def _log_episode(writer, step, ep_ret, ep_len, task, env_info, crashed):
 
 
 def _learn(agent, buf, cfg, step, seed_steps, writer, info):
-    """The gradient updates of this env step (none during the seed steps), and the losses to TensorBoard every
-    log_every_steps. Returns the latest losses (`info` itself if there was no update)."""
+    """This env step's gradient updates, logged every log_every_steps; returns the latest losses."""
     if step >= seed_steps and (step - seed_steps) % cfg.update_every == 0:
-        # Pretrain on the seed data once, as in the paper, then one update every update_every env steps
+        # Pretrain on the seed data once, then update every update_every steps
         for _ in range(seed_steps if step == seed_steps else 1):
             info = agent.update(*buf.sample(cfg.agent.batch_size))
     if step >= seed_steps and step % cfg.log_every_steps == 0:
@@ -102,10 +92,10 @@ def train(cfg):
     writer = SummaryWriter(f"runs/{name}_{time.strftime('%m%d-%H%M%S')}")
 
     def save():
-        # The config goes with the model, so evaluation rebuilds the env it was trained in
+        # Save the config with the model
         agent.save(f"models/{name}.pt", task=task, config=cfg.to_dict(), env_cfg=cfg.env.to_dict())
 
-    # Learning curve: evaluation starts from rest, without the mid-roll curriculum
+    # Learning curve
     eval_log, eval_env = EvalLog(name), QuadEnv(cfg=cfg.env)
     obs, _ = env.reset(seed=cfg.train_seed)
     t0, ep_ret, ep_len_now, ep, tic, info = True, 0.0, 0, 0, time.time(), {}
@@ -135,7 +125,7 @@ def train(cfg):
                 print(f"checkpoint saved at step {step}")
             if step % cfg.eval_every == 0:
                 _evaluate(agent, eval_env, eval_log, cfg.eval_seeds, step, time.time() - tic)
-                t0 = True  # evaluation used the MPPI warm start; restart it for the training episode
+                t0 = True  # evaluation used the MPPI warm start
             if cfg.max_minutes is not None and time.time() - tic > 60 * cfg.max_minutes:
                 print(f"time limit of {cfg.max_minutes} min reached at {step} steps")
                 break

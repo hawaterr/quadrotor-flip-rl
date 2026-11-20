@@ -1,20 +1,11 @@
-"""Config files. Every tunable number lives in one of these:
-
-    env.yaml              simulator, tasks and reward weights (shared by both algorithms)
-    ppo.yaml              PPO settings
-    tdmpc2.yaml           TD-MPC2 settings
-    animate_rollout.yaml  animate_rollout.py settings and the scripted baseline controllers
-
-load_config() merges them into one config and applies command-line overrides, the same style as the
-official TD-MPC2 (Hydra):  python -m tdmpc2.train_tdmpc2 task=flip steps=60000 env.reward.smooth=0.3
-"""
+"""Config loading: the YAML files here, merged, with key=value command-line overrides."""
 import os
 import sys
 
 from omegaconf import OmegaConf
 
 CONFIG_DIR = os.path.dirname(os.path.abspath(__file__))
-TASKS = ("hover", "flip")  # QuadEnv tasks; env.yaml and the algorithm files have a section per task
+TASKS = ("hover", "flip")  # QuadEnv tasks; configs have a section per task
 
 
 class Config(dict):
@@ -51,10 +42,7 @@ def load_env(task):
 
 
 def load_config(name, argv=None):
-    """configs/<name>.yaml, plus `env` (env.yaml for the chosen task), plus the file's section for that task,
-    plus command-line `key=value` overrides (argv, default sys.argv[1:]).
-
-    Overriding a key that doesn't exist (a typo like env.reward.smoth=0.3) raises an error."""
+    """configs/<name>.yaml + env.yaml + the task's sections + command-line overrides; unknown keys raise."""
     raw = _load(name)
     cli = OmegaConf.from_cli(sys.argv[1:] if argv is None else argv)
     cfg = OmegaConf.create({k: v for k, v in raw.items() if k not in TASKS})

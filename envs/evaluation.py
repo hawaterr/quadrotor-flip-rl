@@ -1,22 +1,15 @@
-"""Evaluate a policy on QuadEnv over a few fixed starts, and log the results during training.
-
-Used by both trainers every `eval_every` env steps, so their learning curves (plot_curves.py) measure the same
-thing: deterministic episodes from the real start (no mid-roll curriculum starts, no exploration noise).
-"""
+"""Policy evaluation on fixed seeds, and the CSV log behind the learning curves."""
 import csv
 import os
 
 import numpy as np
 import torch
 
-SETTLE_WINDOW = 0.5  # s at the end of an episode over which "holding still at the target" is measured
+SETTLE_WINDOW = 0.5  # s at the end of an episode for the settle metric
 
 
 def evaluate(env, act, seeds):
-    """Run one episode per seed on `env` (a QuadEnv built with training=False) with act(obs, t) -> action, and
-    return the mean metrics.
-
-    Starts use the training reset (small v/w noise, so each seed differs) without the mid-roll curriculum."""
+    """Mean metrics over one episode per seed, acting with act(obs, t) -> action."""
     tail = max(1, round(SETTLE_WINDOW / env.policy_dt))
     rows = []
     np_state, torch_state = np.random.get_state(), torch.get_rng_state()  # restored below: called mid-training
@@ -54,5 +47,5 @@ class EvalLog:
             self.writer = csv.DictWriter(self.file, fieldnames=list(row))
             self.writer.writeheader()
         self.writer.writerow(row)
-        self.file.flush()  # readable (e.g. by plot_curves.py) while training continues
+        self.file.flush()  # readable while training
         print(f"eval at step {step}: return {metrics['return']:.1f}  final dist {metrics['final_dist']:.2f} m")

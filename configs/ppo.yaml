@@ -1,24 +1,19 @@
-# PPO (Stable-Baselines3). Override anything on the command line, e.g.
-#   python -m ppo.train_ppo steps=300000 env.reward.smooth=0.3
-# The env settings (env.*) come from env.yaml for the chosen task, including env.policy_dt.
+# PPO (Stable-Baselines3); override with key=value on the command line
 
 task: flip                # flip | hover
-train_seed: 0             # seed of the training run (network init, exploration, env), for reproducible runs
+train_seed: 0
 
-steps: 1000000            # env steps to train for
-save_every: 100000        # env steps between checkpoints (models/ppo_<task>.zip), to check progress mid-run
-eval_every: 25000         # env steps between evaluations, logged to results/<model name>.csv (learning curve)
-eval_seeds: [0, 1, 2, 3, 4]  # one evaluation episode per seed (start from rest, deterministic policy)
-init_model: null          # a saved model to continue training from (fine-tuning), e.g. models/ppo_flip_v1.zip
-name: null                # model file name in models/ (default ppo_<task>); use another for experiments,
-                          #   so their checkpoints don't overwrite the main model
-n_envs: 8                 # parallel environments
-n_steps: 1024             # rollout length per env between updates
+steps: 1000000            # env steps
+save_every: 100000        # env steps between checkpoints
+eval_every: 25000         # env steps between evaluations
+eval_seeds: [0, 1, 2, 3, 4]
+init_model: null          # model to fine-tune, e.g. models/ppo_flip_v1.zip
+name: null                # model name (default ppo_<task>)
+n_envs: 8
+n_steps: 1024             # rollout length per env
 batch_size: 2048
-gamma: 0.98               # discount per 0.02 s step (env.policy_dt): a ~1 s horizon
+gamma: 0.98               # ~1 s horizon at 50 Hz
 learning_rate: 3e-4
-ent_coef: 0.0             # entropy bonus
-log_std_init: -1.6        # log of the starting exploration std of each action (-1.6: std 0.2). Noisy rate commands
-                          #   push the mixer to raise collective thrust (hover has more room up than down), so with
-                          #   much more noise the policy learns to rely on that lift and falls in evaluation
-net_arch: [128, 128]      # hidden layers of the policy and value networks
+ent_coef: 0.0
+log_std_init: -1.6        # initial action std 0.2
+net_arch: [128, 128]
